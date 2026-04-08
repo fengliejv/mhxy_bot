@@ -14,7 +14,7 @@ import logging
 import os
 from typing import Tuple, Optional, Dict, Any
 
-from .config import GAME_WINDOW_TITLE, SAFETY_SETTINGS, LOGGING_CONFIG
+from .config import GAME_WINDOW_TITLE, GAME_WINDOW_CLASS, SAFETY_SETTINGS, LOGGING_CONFIG
 
 
 class MHXYEscortBot:
@@ -47,24 +47,31 @@ class MHXYEscortBot:
         查找梦幻西游游戏窗口
         """
         try:
-            # 尝试找到梦幻西游窗口
             def enum_windows_callback(hwnd, windows):
                 if win32gui.IsWindowVisible(hwnd):
                     window_title = win32gui.GetWindowText(hwnd)
+                    class_name = win32gui.GetClassName(hwnd)
                     if GAME_WINDOW_TITLE in window_title:
-                        windows.append((hwnd, window_title))
+                        windows.append((hwnd, window_title, class_name))
                 return True
             
             windows = []
             win32gui.EnumWindows(enum_windows_callback, windows)
             
-            for hwnd, title in windows:
-                self.logger.info(f"Found window: {title} (Handle: {hwnd})")
+            for hwnd, title, cls in windows:
+                self.logger.info(f"Found window: {title} (Handle: {hwnd}, Class: {cls})")
+                if GAME_WINDOW_CLASS and cls == GAME_WINDOW_CLASS:
+                    self.game_window = hwnd
+                    self.logger.info(f"Found 梦幻西游 main window: {title}")
+                    rect = win32gui.GetWindowRect(hwnd)
+                    self.screenshot_region = (rect[0], rect[1], rect[2], rect[3])
+                    self.logger.info(f"Window region: {self.screenshot_region}")
+                    return True
+            
+            for hwnd, title, cls in windows:
                 if GAME_WINDOW_TITLE in title:
                     self.game_window = hwnd
-                    self.logger.info(f"Found 梦幻西游 window: {title}")
-                    
-                    # 获取窗口位置和大小
+                    self.logger.info(f"Found 梦幻西游 window (fallback): {title}")
                     rect = win32gui.GetWindowRect(hwnd)
                     self.screenshot_region = (rect[0], rect[1], rect[2], rect[3])
                     self.logger.info(f"Window region: {self.screenshot_region}")

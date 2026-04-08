@@ -4,6 +4,7 @@
 
 # 游戏窗口设置
 GAME_WINDOW_TITLE = "梦幻西游"
+GAME_WINDOW_CLASS = "MHXYMainFrame"
 
 # 图像识别阈值
 TEMPLATE_MATCH_THRESHOLD = 0.8

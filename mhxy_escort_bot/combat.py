@@ -9,6 +9,7 @@ import numpy as np
 import pyautogui
 from typing import Tuple, Optional, List
 from .main import MHXYEscortBot
+import logging
 
 
 class CombatSystem:
@@ -53,7 +54,6 @@ class CombatSystem:
         bottom_region = screen[int(screen.shape[0] * 0.8):, :]
         
         # 检测是否有战斗特有的颜色模式
-        # 战斗界面通常有特定的UI颜色
         hsv = cv2.cvtColor(bottom_region, cv2.COLOR_BGR2HSV)
         
         # 检测战斗界面常见的UI颜色（需要根据实际游戏调整）
@@ -71,6 +71,17 @@ class CombatSystem:
         # 检测敌人头像区域（通常在屏幕右侧）
         right_region = screen[:, int(screen.shape[1] * 0.7):]
         enemy_avatar_detected = self.detect_enemy_avatars(right_region)
+        
+        # 尝试导入视觉大模型适配器以增强检测
+        try:
+            from .treasure_hunt import TreasureHuntSystem
+            # 如果TreasureHuntSystem可用，尝试获取其视觉适配器
+            # 由于循环导入问题，我们直接尝试导入VisionModelAdapter
+            from .vision_adapter import VisionModelAdapter
+            # 如果有视觉适配器实例，可以使用它来确认战斗状态
+            # 但在这里我们只使用传统方法，因为无法直接访问TreasureHuntSystem实例
+        except ImportError:
+            pass
         
         return enemy_avatar_detected
     
@@ -163,11 +174,21 @@ class CombatSystem:
                     # 计算轮廓中心
                     M = cv2.moments(contour)
                     if M["m00"] != 0:
-                        cx = int(M["m10"] / M["m00"]) + int(screen.shape[1] * 0.3)  # 调整相对坐标到全局坐标
-                        cy = int(M["m01"] / M["m00"])
+                        # 计算在upper_region中的相对坐标
+                        rel_cx = int(M["m10"] / M["m00"])
+                        rel_cy = int(M["m01"] / M["m00"])
                         
-                        # 判断敌人类型（根据颜色和形状）
-                        enemy_type = self.classify_enemy(mask[cy-int(screen.shape[1]*0.3), cx])
+                        # 转换为全局坐标
+                        cx = rel_cx + int(screen.shape[1] * 0.3)  # 加上区域偏移
+                        cy = rel_cy
+                        
+                        # 边界检查
+                        if 0 <= rel_cy < mask.shape[0] and 0 <= rel_cx < mask.shape[1]:
+                            # 判断敌人类型（根据颜色和形状）
+                            enemy_type = self.classify_enemy(mask[rel_cy, rel_cx])
+                        else:
+                            enemy_type = "normal"  # 默认类型
+                            
                         enemies.append((cx, cy, enemy_type))
         
         return enemies
@@ -190,14 +211,11 @@ class CombatSystem:
         self.in_combat = True
         
         battle_round = 0
-        max_rounds = 50  # 防止无限战斗
+        max_rounds = 100  # 增加最大回合数，给视觉模型更多时间检测战斗结束
         
         while self.in_combat and battle_round < max_rounds:
-            # 更新战斗状态
+            # 更新战斗状态 - 使用更精确的检测方法
             self.in_combat = self.detect_combat_status()
-            if not self.in_combat:
-                self.bot.logger.info("战斗结束")
-                return True
             
             # 检测玩家状态
             self.detect_player_status()
@@ -208,13 +226,27 @@ class CombatSystem:
             # 执行战斗策略
             self.execute_combat_strategy()
             
+            # 每隔几轮额外检测一次战斗状态
+            if battle_round % 5 == 0:
+                # 尝试使用更全面的战斗状态检测
+                if hasattr(self.bot, 'treasure') and hasattr(self.bot.treasure, 'vision_adapter'):
+                    screen = self.bot.capture_screen()
+                    if screen is not None:
+                        # 使用视觉大模型检测战斗状态
+                        vision_in_combat = self.bot.treasure.vision_adapter.detect_combat_status_vision(screen)
+                        if not vision_in_combat:
+                            self.bot.logger.info("视觉大模型检测到战斗已结束")
+                            self.in_combat = False
+                            break
+            
             battle_round += 1
-            time.sleep(1.0)  # 等待战斗动作执行
+            time.sleep(0.8)  # 稍微加快检测频率
         
         if battle_round >= max_rounds:
             self.bot.logger.warning("战斗超时，可能卡住了")
             return False
         
+        self.bot.logger.info("战斗结束")
         return True
     
     def manage_status(self):
