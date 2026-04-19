@@ -9,8 +9,11 @@ import numpy as np
 import argparse
 import os
 from typing import List, Tuple, Optional
+import datetime
+import os
 
-
+# 默认输出目录
+DEFAULT_OUTPUT_DIR = "matched_results"
 class TemplateMatcher:
     def __init__(self, method: str = "auto", threshold: float = 0.8):
         self.methods = {
@@ -201,47 +204,100 @@ class TemplateMatcher:
         return True
 
 
+
+def generate_output_path(source_path: str) -> str:
+    """
+    根据当前时间戳生成输出文件路径，保存在默认目录下
+    """
+    # 确保输出目录存在
+    os.makedirs(DEFAULT_OUTPUT_DIR, exist_ok=True)
+    
+    # 获取源文件名（不含扩展名）
+    base_name = os.path.splitext(os.path.basename(source_path))[0]
+    
+    # 生成时间戳字符串
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # 组合输出路径
+    output_filename = f"{base_name}_{timestamp}.jpg"
+    return os.path.join(DEFAULT_OUTPUT_DIR, output_filename)
+
+
+#对外暴露的函数接口，供其他模块调用
+def match_template(source_path: str,
+                   template_path: str,
+                   output_path: str = DEFAULT_OUTPUT_DIR,
+                   threshold: float = 0.8,
+                   find_all: bool = True,
+                   show_result: bool = False) -> Tuple[bool, Optional[np.ndarray], List[Tuple[Tuple[int, int], float]]]:
+    """
+    图像模板匹配函数接口
+    
+    参数:
+        source_path: 源图片路径
+        template_path: 模板图片路径
+        output_path: 输出图片路径，为 None 时不保存
+        threshold: 匹配阈值 (0-1)
+        find_all: 是否查找所有匹配项
+        show_result: 是否显示结果窗口
+    
+    返回:
+        success: 是否成功匹配
+        result_image: 标记后的结果图像，失败时为 None
+        locations: 匹配位置列表，每个元素为 ((x, y), confidence)
+    """
+    matcher = TemplateMatcher(method='ccoeff_normed', threshold=threshold)
+    
+    source = matcher.load_image(source_path)
+    if source is None:
+        return False, None, []
+    
+    template = matcher.load_image(template_path)
+    if template is None:
+        return False, None, []
+    
+    if template.shape[0] > source.shape[0] or template.shape[1] > source.shape[1]:
+        print("错误: 模板图片尺寸大于源图片")
+        return False, None, []
+    
+    if find_all:
+        locations = matcher.match_all_templates(source, template)
+    else:
+        confidence, top_left = matcher.match_template(source, template)
+        if confidence >= threshold:
+            locations = [(top_left, confidence)]
+        else:
+            locations = []
+    
+    if len(locations) == 0:
+        return False, None, []
+    
+    result_image = matcher.draw_matches(source, template, locations)
+    
+    if output_path is not None:
+        cv2.imwrite(output_path, result_image)
+    
+    if show_result:
+        cv2.imshow("Matched Result", result_image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    
+    return True, result_image, locations
+
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="图像模板匹配工具 - 在图A中检测并标记图B的元素",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例用法:
-  python image_matcher.py source.jpg template.jpg
-  python image_matcher.py source.jpg template.jpg -o result.jpg
-  python image_matcher.py source.jpg template.jpg -t 0.7
-  python image_matcher.py source.jpg template.jpg --single
-        """
+    dir = "debug_shots/match"
+    source_path = "debug_shots\mhxy_client_20260419_011140.png"
+
+    success, _, locations = match_template(
+        source_path,
+        template_path="assets\dituguangquan_0.6.PNG",
+        output_path=f"{dir}/matched.jpg",
+        threshold=0.6,
+        find_all=True,
+        show_result=True
     )
-    
-    parser.add_argument("source", help="源图片路径 (图A)")
-    parser.add_argument("template", help="模板图片路径 (图B)")
-    parser.add_argument("-o", "--output", help="输出图片路径 (默认: source_matched.jpg)")
-    parser.add_argument("-t", "--threshold", type=float, default=0.8,
-                       help="匹配阈值 (0-1, 默认: 0.8)")
-    # parser.add_argument("-m", "--method", 
-    #                    choices=["auto", "ccoeff", "ccoeff_normed", "ccorr", 
-    #                            "ccorr_normed", "sqdiff", "sqdiff_normed"],
-    #                    default="auto",
-    #                    help="匹配方法 (默认: auto)")
-    parser.add_argument("--single", action="store_true",
-                       help="只查找最佳匹配项 (默认: 查找所有)")
-    
-    args = parser.parse_args()
-    
-    if args.threshold < 0 or args.threshold > 1:
-        print("错误: 阈值必须在 0 到 1 之间")
-        return
-    
-    matcher = TemplateMatcher(method='ccoeff_normed', threshold=args.threshold)
-    
-    success = matcher.find_and_mark(
-        source_path=args.source,
-        template_path=args.template,
-        output_path=args.output,
-        find_all=not args.single
-    )
-    
+    print("匹配位置信息:", locations)
     if not success:
         print("\n匹配失败")
 
