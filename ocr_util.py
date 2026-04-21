@@ -4,7 +4,7 @@ import desk_util
 import siliflow_client
 import datetime
 from PIL import Image
-
+import sys_util
 def _parse_roi(roi_text: str):
     parts = [x.strip() for x in roi_text.split(",")]
     if len(parts) != 4:
@@ -35,12 +35,20 @@ def detect_current_map_by_roi(
         raise RuntimeError("缺少 MHXY_MAP_ROI，请在 .env 配置，例如 0,0,120,120")
     x1, y1, x2, y2 = _parse_roi(roi_text)
 
-    img = desk_util.capture_mhxy_client_image(hwnd)
-    sys_util.save_debug_image(img, "map_roi")
+    img_bgr = desk_util.capture_mhxy_client_image(hwnd)
+    sys_util.save_debug_image(img_bgr, "map_roi")
 
     # 根据 ROI 裁剪图像
-    if isinstance(img, (bytes, bytearray, memoryview)):
-        img = Image.open(io.BytesIO(bytes(img)))
+    if isinstance(img_bgr, (bytes, bytearray, memoryview)):
+        img = Image.open(io.BytesIO(bytes(img_bgr)))
+    else:
+        shape = getattr(img_bgr, "shape", None)
+        if shape is not None and len(shape) == 3 and shape[2] == 3:
+            img = Image.fromarray(img_bgr[:, :, ::-1])
+        elif shape is not None and len(shape) == 3 and shape[2] == 4:
+            img = Image.fromarray(img_bgr[:, :, [2, 1, 0, 3]])
+        else:
+            img = Image.fromarray(img_bgr)
     cropped_img = img.crop((x1, y1, x2, y2))
     sys_util.save_debug_image(cropped_img, "map_roi_cropped")
 

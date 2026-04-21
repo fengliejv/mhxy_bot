@@ -8,12 +8,13 @@ import cv2
 import numpy as np
 import argparse
 import os
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Union
 import datetime
 import os
 
-# 默认输出目录
-DEFAULT_OUTPUT_DIR = "matched_results"
+import sys_util
+
+
 
 
 # 核心类：负责加载图片、执行模板匹配、筛除重复匹配、绘制标记结果
@@ -34,19 +35,25 @@ class TemplateMatcher:
         # 匹配阈值（越高越严格；sqdiff 类方法会在内部换算）
         self.threshold = threshold
     
-    def load_image(self, path: str) -> Optional[np.ndarray]:
-        # 1) 检查路径是否存在
+    def load_image(self, source: Union[str, np.ndarray, bytes, bytearray, memoryview]) -> Optional[np.ndarray]:
+        if isinstance(source, np.ndarray):
+            return source
+        if isinstance(source, (bytes, bytearray, memoryview)):
+            buf = np.frombuffer(bytes(source), dtype=np.uint8)
+            img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            if img is None:
+                print("错误: 无法解码图片字节")
+                return None
+            return img
+
+        path = str(source)
         if not os.path.exists(path):
             print(f"错误: 图片不存在 - {path}")
             return None
-        
-        # 2) 使用 OpenCV 读取图片（默认读成 BGR 格式的 numpy 数组）
         img = cv2.imread(path)
         if img is None:
             print(f"错误: 无法读取图片 - {path}")
             return None
-        
-        # 3) 返回图片矩阵
         return img
     
     def match_template(self, source: np.ndarray, template: np.ndarray) -> Tuple[float, Tuple[int, int]]:
@@ -188,18 +195,21 @@ class TemplateMatcher:
     
 
 #对外暴露的函数接口，供其他模块调用
-def match_template(source_path: str,
-                   template_path: str,
-                   threshold: float = 0.8,
-                   is_debug: bool = True,
-                   find_all: bool = True) -> Tuple[bool, Optional[np.ndarray], List[Tuple[Tuple[int, int], float]]]:
+def match_template(
+    source_path: Union[str, np.ndarray, bytes, bytearray, memoryview],
+    template_path: Union[str, np.ndarray, bytes, bytearray, memoryview],
+    output_path: Optional[str] = None,
+    threshold: float = 0.8,
+    find_all: bool = True,
+    show_result: bool = False,
+) -> Tuple[bool, Optional[np.ndarray], List[Tuple[Tuple[int, int], float]]]:
     """
     图像模板匹配函数接口
     
     参数:
-        source_path: 源图片路径
-        template_path: 模板图片路径
-        output_path: 输出图片路径，为 None 时不保存
+        source_path: 源图片（路径 / numpy.ndarray / 图片字节）
+        template_path: 模板图片（路径 / numpy.ndarray / 图片字节）
+        output_path: 输出图片路径或目录，为 None 时不保存
         threshold: 匹配阈值 (0-1)
         find_all: 是否查找所有匹配项
         show_result: 是否显示结果窗口
@@ -244,10 +254,19 @@ def match_template(source_path: str,
     # 7) 在源图上绘制匹配框
     result_image = matcher.draw_matches(source, template, locations)
     
-    # 8) 保存结果图（output_path 为 None 时不保存）
-    if isdebug:
-        cv2.imwrite(DEFAULT_OUTPUT_DIR, result_image)
-        
+    if output_path is not None:
+        out_path = output_path
+        if os.path.isdir(output_path):
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_path = os.path.join(output_path, f"matched_{ts}.png")
+        cv2.imwrite(out_path, result_image)
+
+    if show_result:
+        cv2.imshow("Matched Result", result_image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    sys_util.save_debug_image(result_image, "detected")
     # 10) 返回结果：是否成功、结果图、匹配列表
     return True, result_image, locations
 

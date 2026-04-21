@@ -1,6 +1,5 @@
 import ctypes
 from ctypes import wintypes
-from typing import Optional
 import sys
 import os
 import sys_util
@@ -11,7 +10,8 @@ from PIL import Image
 from enum import IntEnum
 import random
 import time
-
+import cv2
+import numpy as np
 def _rest(ms: int = 500) -> None:
     """休息 ms 秒 + 0.5 秒 * 随机值（0~1）"""
     t = ms / 1000.0
@@ -110,45 +110,44 @@ def init_mhxy_window() -> int:
 def capture_mhxy_client_image(
     hwnd: int,
 ):
-   """
-    通过窗口句柄截图，**自动去掉标题栏和边框**（只截客户区）
+    """
+    通过窗口句柄截图，自动去掉标题栏和边框（只截客户区）
     :param hwnd: 窗口句柄
     :return: PIL Image 对象
     """
-    # 1. 获取窗口 客户区坐标（无标题栏）
     left, top, right, bottom = win32gui.GetClientRect(hwnd)
-    # 转换为屏幕坐标
     client_left, client_top = win32gui.ClientToScreen(hwnd, (left, top))
     client_right, client_bottom = win32gui.ClientToScreen(hwnd, (right, bottom))
 
     w = client_right - client_left
     h = client_bottom - client_top
 
-    # 2. 获取窗口 DC
     hwndDC = win32gui.GetWindowDC(hwnd)
     mfcDC = win32ui.CreateDCFromHandle(hwndDC)
     saveDC = mfcDC.CreateCompatibleDC()
 
-    # 3. 创建位图
     saveBitMap = win32ui.CreateBitmap()
     saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
     saveDC.SelectObject(saveBitMap)
 
-    # 4. 截图（只截客户区）
     saveDC.BitBlt(
-        (0, 0), (w, h),
+        (0, 0),
+        (w, h),
         mfcDC,
-        (left, top),  # 从客户区左上角开始
-        win32con.SRCCOPY
+        (left, top),
+        win32con.SRCCOPY,
     )
 
-    # 5. 转成 PIL Image
     bmpinfo = saveBitMap.GetInfo()
     bmpstr = saveBitMap.GetBitmapBits(True)
     img = Image.frombuffer(
-        'RGB',
-        (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
-        bmpstr, 'raw', 'BGRX', 0, 1
+        "RGB",
+        (bmpinfo["bmWidth"], bmpinfo["bmHeight"]),
+        bmpstr,
+        "raw",
+        "BGRX",
+        0,
+        1,
     )
 
     # 6. 清理资源（必须）
@@ -156,7 +155,8 @@ def capture_mhxy_client_image(
     saveDC.DeleteDC()
     mfcDC.DeleteDC()
     win32gui.ReleaseDC(hwnd, hwndDC)
-    return img
+    img_bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+    return img_bgr
 
 
 try:
@@ -254,6 +254,9 @@ def click_at(hwnd: int, click_x: int, click_y: int) -> None:
     user32.SetCursorPos(point.x, point.y)
     # 左键按下
     user32.mouse_event(0x0002, 0, 0, 0, 0)
-    _rest(100)   
+    _rest(100)
+    img_bgr = capture_mhxy_client_image(hwnd)
+    sys_util.save_debug_image(img_bgr,"move")
+
     # 左键抬起
     user32.mouse_event(0x0004, 0, 0, 0, 0)
