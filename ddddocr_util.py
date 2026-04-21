@@ -7,7 +7,7 @@ ocr = ddddocr.DdddOcr(show_ad=False, beta=True)
 
 def ocr_region(img, region_box):
     """
-    对指定区域进行 OCR 文字识别。
+    对指定区域进行 OCR 数字文字识别。
 
     参数:
         img (numpy.ndarray): 原图，BGR 格式。
