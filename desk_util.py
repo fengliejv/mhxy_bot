@@ -19,24 +19,8 @@ def _rest(ms: int = 500) -> None:
     
 def _set_dpi_aware() -> None:
     user32 = ctypes.windll.user32
-    try:
-        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-        print("SetProcessDpiAwarenessContext")
-        return
-    except Exception:
-        pass
-    try:
-        shcore = ctypes.windll.shcore
-        shcore.SetProcessDpiAwareness(2)
-        print("SetProcessDpiAwareness")
-        return
-    except Exception:
-        pass
-    try:
-        user32.SetProcessDPIAware()
-        print("SetProcessDPIAware")
-    except Exception:
-        pass
+    user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    
 
 def _find_window(title_substring: str) -> int:
     """
@@ -110,20 +94,16 @@ def init_mhxy_window() -> int:
 def capture_mhxy_client_image(
     hwnd: int,
 ):
-    """
-    通过窗口句柄截图，自动去掉标题栏和边框（只截客户区）
-    :param hwnd: 窗口句柄
-    :return: PIL Image 对象
-    """
     left, top, right, bottom = win32gui.GetClientRect(hwnd)
     client_left, client_top = win32gui.ClientToScreen(hwnd, (left, top))
-    client_right, client_bottom = win32gui.ClientToScreen(hwnd, (right, bottom))
 
-    w = client_right - client_left
-    h = client_bottom - client_top
+    w = right - left
+    h = bottom - top
+    if w <= 0 or h <= 0:
+        raise RuntimeError("客户端区域尺寸无效")
 
-    hwndDC = win32gui.GetWindowDC(hwnd)
-    mfcDC = win32ui.CreateDCFromHandle(hwndDC)
+    screenDC = win32gui.GetDC(0)
+    mfcDC = win32ui.CreateDCFromHandle(screenDC)
     saveDC = mfcDC.CreateCompatibleDC()
 
     saveBitMap = win32ui.CreateBitmap()
@@ -134,8 +114,8 @@ def capture_mhxy_client_image(
         (0, 0),
         (w, h),
         mfcDC,
-        (left, top),
-        win32con.SRCCOPY,
+        (client_left, client_top),
+        win32con.SRCCOPY | 0x40000000,
     )
 
     bmpinfo = saveBitMap.GetInfo()
@@ -150,11 +130,10 @@ def capture_mhxy_client_image(
         1,
     )
 
-    # 6. 清理资源（必须）
     win32gui.DeleteObject(saveBitMap.GetHandle())
     saveDC.DeleteDC()
     mfcDC.DeleteDC()
-    win32gui.ReleaseDC(hwnd, hwndDC)
+    win32gui.ReleaseDC(0, screenDC)
     img_bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
     return img_bgr
 
