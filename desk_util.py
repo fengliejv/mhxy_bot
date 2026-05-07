@@ -23,7 +23,7 @@ def _rest(ms: int = 500) -> None:
 def _set_dpi_aware() -> None:
     user32 = ctypes.windll.user32
     user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-    
+    # ctypes.windll.shcore.SetProcessDpiAwareness(2)
 
 def _find_window(title_substring: str) -> int:
     """
@@ -97,13 +97,32 @@ def init_mhxy_window() -> int:
 def capture_mhxy_client_image(
     hwnd: int,
 ):
+    _set_dpi_aware()
+    try:
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        if not win32gui.IsWindowVisible(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+    except Exception:
+        pass
+    try:
+        _activate_window(hwnd)
+    except Exception:
+        pass
+    _rest(120)
+
     left, top, right, bottom = win32gui.GetClientRect(hwnd)
     client_left, client_top = win32gui.ClientToScreen(hwnd, (left, top))
 
     w = right - left
     h = bottom - top
     if w <= 0 or h <= 0:
-        raise RuntimeError("客户端区域尺寸无效")
+        _rest(120)
+        left, top, right, bottom = win32gui.GetClientRect(hwnd)
+        w = right - left
+        h = bottom - top
+        if w <= 0 or h <= 0:
+            raise RuntimeError("客户端区域尺寸无效")
 
     screenDC = win32gui.GetDC(0)
     mfcDC = win32ui.CreateDCFromHandle(screenDC)
@@ -203,15 +222,14 @@ class VirtualKey(IntEnum):
 
 def press_vk(vk: int) -> None:
     # 模拟按键：按下 vk → 松开 vk
-    if sys.platform != "win32":
-        raise RuntimeError("仅支持 Windows")
+    _rest()
+
     user32 = ctypes.windll.user32
 
     INPUT_KEYBOARD = 1  # INPUT.type：键盘输入
     KEYEVENTF_KEYUP = 0x0002  # KEYBDINPUT.dwFlags：按键抬起
     KEYEVENTF_SCANCODE = 0x0008  # KEYBDINPUT.dwFlags：使用扫描码而非虚拟键码
 
-    ULONG_PTR, KEYBDINPUT, INPUT_union, INPUT = _get_sendinput_types()
     extra = _ULONG_PTR(0)  # KEYBDINPUT.dwExtraInfo：通常填 0
     # vk -> scan：将虚拟键码映射为扫描码（更接近真实硬件按键事件）
     scan = user32.MapVirtualKeyW(int(vk), 0) & 0xFF
@@ -237,47 +255,60 @@ def press_vk(vk: int) -> None:
         user32.keybd_event(int(vk), int(scan), KEYEVENTF_KEYUP, 0)
     # 再留一点间隔，减少连发干扰
     _rest()
-
-def click_at(hwnd: int, click_x: int, click_y: int) -> None:
-    # 鼠标移动到该点并左键点击
-    user32 = ctypes.windll.user32
-    # 将窗口客户区坐标转为屏幕坐标
-    point = win32gui.ClientToScreen(hwnd, (int(click_x), int(click_y)))
-    # 设置鼠标位置
-    user32.SetCursorPos(int(point[0]), int(point[1]))
-    # 左键按下
-    user32.mouse_event(0x0002, 0, 0, 0, 0)
-    _rest()
-    img_bgr = capture_mhxy_client_image(hwnd)
-    sys_util.save_debug_image(img_bgr,"move")
-
-    # 左键抬起
-    user32.mouse_event(0x0004, 0, 0, 0, 0)
-    _rest()
-
-
-def match_template_and_click(hwnd: int, template_path: str,threshold: float) -> None:
+import win32api
+import win32con
+import image_matcher
+import pyautogui
+def match_template_and_click(hwnd: int, template_path: str,threshold: float, center: bool = False) -> None:
     img_bgr = capture_mhxy_client_image(hwnd)
 
-    success, _, locations = match_template(
+    cursor_template_path = "assets/shubiao.PNG"
+    cursor_ok, _, cursor_locations = image_matcher.match_template(
+        img_bgr,
+        cursor_template_path,
+        threshold=0.5,
+        find_all=False,
+    )
+    if (not cursor_ok) or (not cursor_locations):
+        raise RuntimeError("未匹配到鼠标模板: {}".format(cursor_template_path))
+
+    target_ok, _, target_locations = image_matcher.match_template(
         img_bgr,
         template_path,
         threshold=threshold,
-        find_all=True,
+        find_all=False,
     )
-    if (not success) or (not locations):
-        raise RuntimeError("未匹配到地图模板")
+    if (not target_ok) or (not target_locations):
+        print("未匹配到目标模板: {}".format(template_path))
+        return
 
-    (x, y), confidence = max(locations, key=lambda item: (item[0][1], item[0][0]))
-    template_img = cv2.imread(template_path)
-    if template_img is None:
-        raise RuntimeError("无法读取地图模板图片: {}".format(template_path))
-    w = int(template_img.shape[1])
-    h = int(template_img.shape[0])
-    click_x = int(x + w - 1)
-    click_y = int(y + h - 1)
+    (cursor_x, cursor_y), _ = cursor_locations[0]
+    (target_x, target_y), _ = target_locations[0]
+    # 取目标模板中心点
+    target_img = cv2.imread(template_path)
+    if target_img is None:
+        raise RuntimeError("无法读取目标模板图片: {}".format(template_path))
+    h, w = target_img.shape[:2]
+    target_cx = target_x 
+    target_cy = target_y
+    if center:
+        target_cx = target_x + w // 2
+        target_cy = target_y + h // 2
 
-    click_at(hwnd, click_x, click_y)
+    target_img = cv2.imread(template_path)
+    if target_img is None:
+        raise RuntimeError("无法读取目标模板图片: {}".format(template_path))
+    cursor_pos = pyautogui.position()
+    cursor_pos_x, cursor_pos_y = cursor_pos[0], cursor_pos[1]
+
+    print(f"cursor_x: {cursor_x}, cursor_y: {cursor_y}")
+    print(f"target_cx: {target_cx}, target_cy: {target_cy}")
+    print(f"cursor position: {cursor_pos}")
+    x = target_cx+(cursor_pos_x-cursor_x)
+    y = target_cy+(cursor_pos_y-cursor_y)
+    print(f"x: {x}, y: {y}")
+    pyautogui.moveTo(x, y, 1)
+    pyautogui.click()
 
 
 def waite_charachter_stop(hwnd: int):
@@ -320,3 +351,179 @@ def waite_charachter_stop(hwnd: int):
         prev = coord_text
         if stable >= 2:
             return coord_text
+
+
+from siliflow_client import paddleocr
+def move_with_map(hwnd:int,target_x:int,target_y:int) -> None:
+    """
+    移动鼠标到地图上的指定位置
+    """
+    move_mouse_to_window_center(hwnd)
+    press_vk(VirtualKey.TAB)
+    _rest(300)
+
+    cursor_template_path = "assets/shubiao.PNG"
+    roi_w = 60
+    roi_h = 60
+
+    def _parse_coord(text: str):
+        raw = str(text or "").strip()
+        nums = re.findall(r"\d+", raw)
+        if len(nums) < 2:
+            return None
+        x = int(nums[0])
+        y = int(nums[1])
+        if x >= 1000:
+            x = int(str(x)[-3:])
+        if y >= 1000:
+            y = int(str(y)[-3:])
+        return x, y
+
+    def _detect_cursor_and_coord():
+        img_bgr = capture_mhxy_client_image(hwnd)
+        ok, _, locations = image_matcher.match_template(
+            img_bgr,
+            cursor_template_path,
+            threshold=0.35,
+            find_all=False,
+        )
+        if (not ok) or (not locations):
+            return None, None, None
+        (cx, cy), _ = locations[0]
+        anchor_x = int(cx)
+        anchor_y = int(cy)
+
+        x1 = int(anchor_x - roi_w//2)
+        x2 = int(anchor_x + roi_w//2)
+        y2 = int(anchor_y + roi_h//2)
+        y1 = int(anchor_y - roi_h//2)
+
+        h, w = img_bgr.shape[:2]
+        if x1 < 0:
+            x1 = 0
+        if y1 < 0:
+            y1 = 0
+        if x2 > w:
+            x2 = w
+        if y2 > h:
+            y2 = h
+        if x2 <= x1 or y2 <= y1:
+            return None, None, None
+        roi = img_bgr[y1:y2, x1:x2]
+        text = paddleocr(roi)
+        coord = _parse_coord(text)
+        return coord, (x1, y1, x2, y2), (cx, cy)
+
+    left, top, right, bottom = win32gui.GetClientRect(hwnd)
+    client_w = int(right - left)
+    client_h = int(bottom - top)
+
+    def _clamp(v: int, lo: int, hi: int) -> int:
+        if v < lo:
+            return lo
+        if v > hi:
+            return hi
+        return v
+
+    def _estimate_px_per_unit(axis: str, probe_px: int) -> float:
+        coord0, _, _ = _detect_cursor_and_coord()
+        if coord0 is None:
+            return 0.0
+        x0, y0 = coord0
+        if axis == "x":
+            win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, int(probe_px), 0, 0, 0)
+        else:
+            win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, 0, int(probe_px), 0, 0)
+        _rest(160)
+        coord1, _, _ = _detect_cursor_and_coord()
+        if axis == "x":
+            win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, int(-probe_px), 0, 0, 0)
+        else:
+            win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, 0, int(-probe_px), 0, 0)
+        _rest(160)
+        if coord1 is None:
+            return 0.0
+        x1, y1 = coord1
+        delta_units = abs(int(x1) - int(x0)) if axis == "x" else abs(int(y1) - int(y0))
+        if delta_units <= 0:
+            return 0.0
+        return float(abs(int(probe_px))) / float(delta_units)
+
+    step_x = None
+    step_y = None
+    prev_sign_x = None
+    prev_sign_y = None
+    max_iter = 60
+    for _ in range(max_iter):
+        coord, _, _ = _detect_cursor_and_coord()
+        if coord is None:
+            _rest(200)
+            continue
+
+        cur_map_x, cur_map_y = coord
+        if step_x is None or step_y is None:
+            probe_px_x = _clamp(client_w // 4 if client_w > 0 else 160, 80, 240)
+            probe_px_y = _clamp(client_h // 4 if client_h > 0 else 120, 60, 200)
+            px_per_unit_x = _estimate_px_per_unit("x", probe_px_x)
+            px_per_unit_y = _estimate_px_per_unit("y", probe_px_y)
+
+            err_units_x = abs(int(target_x) - int(cur_map_x))
+            err_units_y = abs(int(target_y) - int(cur_map_y))
+
+            if px_per_unit_x <= 0.0:
+                step_x = _clamp(err_units_x * 8, 40, 800)
+            else:
+                step_x = _clamp(int(round(err_units_x * px_per_unit_x)), 40, 1200)
+
+            if px_per_unit_y <= 0.0:
+                step_y = _clamp(err_units_y * 8, 40, 800)
+            else:
+                step_y = _clamp(int(round(err_units_y * px_per_unit_y)), 40, 1200)
+
+        if int(cur_map_x) == int(target_x) and int(cur_map_y) == int(target_y):
+            return
+
+        move_dx = 0
+        move_dy = 0
+
+        if int(cur_map_x) != int(target_x):
+            sign_x = 1 if int(cur_map_x) < int(target_x) else -1
+            if prev_sign_x is not None and sign_x != prev_sign_x:
+                step_x = max(1, step_x // 2)
+            move_dx = int(sign_x * step_x)
+            prev_sign_x = sign_x
+
+        if int(cur_map_y) != int(target_y):
+            sign_y = 1 if int(cur_map_y) < int(target_y) else -1
+            if prev_sign_y is not None and sign_y != prev_sign_y:
+                step_y = max(1, step_y // 2)
+            move_dy = int(sign_y * step_y)
+            prev_sign_y = sign_y
+
+        if move_dx == 0 and move_dy == 0:
+            return
+
+        pyautogui.moveRel(move_dx, move_dy, duration=0.05)
+        _rest(120)
+
+    raise RuntimeError("move_with_map 未在迭代次数内收敛到目标坐标: {},{}".format(target_x, target_y))
+
+
+def move_mouse_to_window_center(hwnd: int) -> None:
+    """
+    将鼠标移动到指定窗口的客户区中央
+    """
+    left, top, right, bottom = win32gui.GetClientRect(hwnd)
+    center_x = (left + right) // 2
+    center_y = (top + bottom) // 2
+    screen_x, screen_y = win32gui.ClientToScreen(hwnd, (center_x, center_y))
+
+    # 获取当前鼠标位置
+    curr_x, curr_y = win32gui.GetCursorPos()
+
+    # 计算相对移动量
+    dx = screen_x - curr_x
+    dy = screen_y - curr_y
+
+    # 使用 mouse_event 移动鼠标
+    win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, dx, dy, 0, 0)

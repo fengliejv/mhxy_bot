@@ -69,18 +69,14 @@ class AndroidMhxyBot:
         if not self.map_roi_text:
             raise RuntimeError("缺少 MHXY_MAP_ROI，请在 .env 配置，例如 0,0,120,120")
 
-        self.tpl_map_button = os.getenv("ANDROID_TPL_MAP_BUTTON", "").strip()
-        self.tpl_coord_input = os.getenv("ANDROID_TPL_COORD_INPUT", "").strip()
-        self.tpl_move_button = os.getenv("ANDROID_TPL_MOVE_BUTTON", "").strip()
-
-        if not self.tpl_map_button:
-            self.tpl_map_button = os.path.join("assets", "android_map_button.png")
-        if not self.tpl_coord_input:
-            self.tpl_coord_input = os.path.join("assets", "android_coord_input.png")
-        if not self.tpl_move_button:
-            self.tpl_move_button = os.path.join("assets", "android_move_button.png")
+        self.tpl_map_button = os.getenv("ANDROID_TPL_MAP_BUTTON", "assets/android/map/map_button.jpg").strip() or "assets/android/map/map_button.jpg"
+        self.tpl_map_search_icon = os.getenv("ANDROID_TPL_MAP_SEARCH_ICON", "assets/android/map/map_search_icon.png").strip() or "assets/android/map/map_search_icon.png"
+        self.tpl_map_input_icon = os.getenv("ANDROID_TPL_MAP_INPUT_ICON", "assets/android/map/map_input_icon.png").strip() or "assets/android/map/map_input_icon.png"
+        self.tpl_map_dianxiaoer = os.getenv("ANDROID_TPL_MAP_DIANXIAOER", "assets/android/map/map_dianxiaoer.png").strip() or "assets/android/map/map_dianxiaoer.png"
+        self.tpl_map_on_the_way = os.getenv("ANDROID_TPL_MAP_ON_THE_WAY", "assets/android/map/map_on_the_way.png").strip() or "assets/android/map/map_on_the_way.png"
 
         self.match_threshold = float(os.getenv("ANDROID_MATCH_THRESHOLD", "0.8").strip() or "0.8")
+        self.step_sleep_s = float(os.getenv("ANDROID_STEP_SLEEP_S", "0.4").strip() or "0.4")
 
     def screenshot_bgr(self) -> np.ndarray:
         img = self.adb.screenshot_bgr()
@@ -111,65 +107,69 @@ class AndroidMhxyBot:
             raise RuntimeError(f"模板匹配失败: {template_path}")
         (top_left, _) = best
         cx, cy = _template_center_from_top_left(template_path, top_left, extra_offset=extra_offset)
+        try:
+            dbg = img_bgr.copy()
+            cv2.drawMarker(dbg, (int(cx), int(cy)), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=40, thickness=2)
+            sys_util.save_debug_image(dbg, f"android_tap_{os.path.basename(template_path)}_{cx}_{cy}")
+        except Exception:
+            pass
         self.adb.tap(cx, cy)
         return cx, cy
 
-    def open_mini_map(self) -> Tuple[int, int]:
+    def _tap(self, template_path: str, threshold: Optional[float] = None, extra_offset: Tuple[int, int] = (0, 0)) -> Tuple[int, int]:
         img_bgr = self.screenshot_bgr()
-        return self._tap_template(img_bgr, self.tpl_map_button, extra_offset=(0, 0))
+        pt = self._tap_template(img_bgr, template_path, threshold=threshold, extra_offset=extra_offset)
+        time.sleep(self.step_sleep_s)
+        return pt
 
-    def input_target_coord(self, x: int, y: int) -> Tuple[int, int, str]:
-        img_bgr = self.screenshot_bgr()
-        click_offset_x = int(os.getenv("ANDROID_INPUT_CLICK_OFFSET_X", "0") or "0")
-        click_offset_y = int(os.getenv("ANDROID_INPUT_CLICK_OFFSET_Y", "0") or "0")
-        tx, ty = self._tap_template(
-            img_bgr,
-            self.tpl_coord_input,
-            extra_offset=(click_offset_x, click_offset_y),
-        )
-        time.sleep(float(os.getenv("ANDROID_AFTER_FOCUS_SLEEP_S", "0.3") or "0.3"))
-        clear_n = int(os.getenv("ANDROID_INPUT_CLEAR_BACKSPACE_N", "0") or "0")
-        for _ in range(max(0, clear_n)):
-            self.adb.keyevent(67)
-        fmt = os.getenv("ANDROID_COORD_TEXT_FORMAT", "({x},{y})")
-        text = fmt.format(x=int(x), y=int(y))
-        self.adb.input_text(text)
-        return tx, ty, text
-
-    def click_move(self) -> Tuple[int, int]:
-        img_bgr = self.screenshot_bgr()
-        return self._tap_template(img_bgr, self.tpl_move_button, extra_offset=(0, 0))
-
-    def go_to_in_changan(self, x: int, y: int) -> Dict:
+    def go_to_dianxiaoer_in_changan(self) -> Dict:
         detected = self.detect_current_map()
         map_name = str(detected.get("map_name", "")).strip()
         if "长安城" not in map_name:
             return {"ok": False, "reason": "not_in_changan", "map_name": map_name, "detected": detected}
 
-        mp = self.open_mini_map()
-        time.sleep(float(os.getenv("ANDROID_AFTER_OPEN_MAP_SLEEP_S", "0.5") or "0.5"))
-        ip = self.input_target_coord(x, y)
-        time.sleep(float(os.getenv("ANDROID_AFTER_INPUT_SLEEP_S", "0.3") or "0.3"))
-        mv = self.click_move()
+        # thr_map_button = float(os.getenv("ANDROID_THR_MAP_BUTTON", str(self.match_threshold)) or self.match_threshold)
+        thr_search_icon = float(os.getenv("ANDROID_THR_MAP_SEARCH_ICON", str(self.match_threshold)) or self.match_threshold)
+        thr_input_icon = float(os.getenv("ANDROID_THR_MAP_INPUT_ICON", str(self.match_threshold)) or self.match_threshold)
+        thr_dianxiaoer = float(os.getenv("ANDROID_THR_MAP_DIANXIAOER", str(self.match_threshold)) or self.match_threshold)
+        thr_on_the_way = float(os.getenv("ANDROID_THR_MAP_ON_THE_WAY", str(self.match_threshold)) or self.match_threshold)
+
+        p1 = self._tap(self.tpl_map_button, threshold=0.6)
+        p2 = self._tap(self.tpl_map_search_icon, threshold=thr_search_icon)
+        p3 = self._tap(self.tpl_map_input_icon, threshold=thr_input_icon)
+
+        adb_ime = os.getenv("ANDROID_ADB_IME_ID", "com.android.adbkeyboard/.AdbIME").strip() or "com.android.adbkeyboard/.AdbIME"
+        sogou_ime = os.getenv("ANDROID_SOGOU_IME_ID", "com.sohu.inputmethod.sogou.xiaomi/.SogouIME").strip() or "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
+        self.adb.ime_set(adb_ime)
+        time.sleep(self.step_sleep_s)
+        self.adb.adbkeyboard_input_text("店小二")
+        time.sleep(self.step_sleep_s)
+        self.adb.keyevent(66)
+        time.sleep(self.step_sleep_s)
+        self.adb.ime_set(sogou_ime)
+        time.sleep(self.step_sleep_s)
+
+        p4 = self._tap(self.tpl_map_dianxiaoer, threshold=thr_dianxiaoer)
+        p5 = self._tap(self.tpl_map_on_the_way, threshold=thr_on_the_way)
+
         return {
             "ok": True,
             "map_name": map_name,
-            "map_button_tap": mp,
-            "input_tap": (ip[0], ip[1]),
-            "input_text": ip[2],
-            "move_button_tap": mv,
+            "tap_map_button": p1,
+            "tap_search_icon": p2,
+            "tap_input_icon": p3,
+            "input_text": "店小二",
+            "tap_dianxiaoer": p4,
+            "tap_on_the_way": p5,
             "detected": detected,
         }
 
 
 def main() -> None:
     sys_util.load_dotenv()
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--x", type=int, required=True)
-    ap.add_argument("--y", type=int, required=True)
-    args = ap.parse_args()
+
     bot = AndroidMhxyBot()
-    result = bot.go_to_in_changan(args.x, args.y)
+    result = bot.go_to_dianxiaoer_in_changan()
     for k, v in result.items():
         print(f"{k}: {v}")
 

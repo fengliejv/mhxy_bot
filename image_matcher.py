@@ -262,25 +262,30 @@ def match_template(
         cv2.imwrite(out_path, result_image)
 
     if show_result:
-        cv2.imshow("Matched Result", result_image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        try:
+            cv2.imshow("Matched Result", result_image)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
 
-    sys_util.save_debug_image(result_image, "detected")
+    sys_util.save_debug_image(result_image, "detected"+template_path.split("/")[-1])
     # 10) 返回结果：是否成功、结果图、匹配列表
     return True, result_image, locations
 
 
 def main():
     # 这里是脚本直接运行时的示例入口
-    source_path = "debug_shots\mhxy_client_20260419_011140.png"
+    source_path = "debug_capture/20260507_230507_android_screencap.png"
 
     # 调用对外接口执行匹配
     success, _, locations = match_template(
         source_path,
-        template_path="assets\dituguangquan_0.6.PNG",
-        threshold=0.6,
+        template_path="assets/android/map_button.jpg",
+        threshold=0.5,
         find_all=True,
+        output_path="debug_capture",
+        show_result=True,
     )
     # 打印匹配坐标信息（便于后续程序使用）
     print("匹配位置信息:", locations)
