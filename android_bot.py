@@ -1,6 +1,7 @@
 import argparse
 import io
 import os
+import re
 import time
 from typing import Dict, Optional, Tuple
 
@@ -74,13 +75,17 @@ class AndroidMhxyBot:
         self.tpl_map_input_icon = os.getenv("ANDROID_TPL_MAP_INPUT_ICON", "assets/android/map/map_input_icon.png").strip() or "assets/android/map/map_input_icon.png"
         self.tpl_map_dianxiaoer = os.getenv("ANDROID_TPL_MAP_DIANXIAOER", "assets/android/map/map_dianxiaoer.png").strip() or "assets/android/map/map_dianxiaoer.png"
         self.tpl_map_on_the_way = os.getenv("ANDROID_TPL_MAP_ON_THE_WAY", "assets/android/map/map_on_the_way.png").strip() or "assets/android/map/map_on_the_way.png"
+        self.tpl_system_expand = os.getenv("ANDROID_TPL_SYSTEM_EXPAND", "assets/android/system/expand.jpg").strip() or "assets/android/system/expand.jpg"
+        self.tpl_system_hide_ui = os.getenv("ANDROID_TPL_SYSTEM_HIDE_UI", "assets/android/system/yincangjiemian.jpg").strip() or "assets/android/system/yincangjiemian.jpg"
+        self.tpl_system_hide_player = os.getenv("ANDROID_TPL_SYSTEM_HIDE_PLAYER", "assets/android/system/yincangwanjia.jpg").strip() or "assets/android/system/yincangwanjia.jpg"
 
         self.match_threshold = float(os.getenv("ANDROID_MATCH_THRESHOLD", "0.8").strip() or "0.8")
         self.step_sleep_s = float(os.getenv("ANDROID_STEP_SLEEP_S", "0.4").strip() or "0.4")
+        self.coord_ocr_engine = (os.getenv("ANDROID_COORD_OCR_ENGINE", "paddle").strip() or "paddle").lower()
+        self.coord_roi_text = os.getenv("ANDROID_COORD_ROI", "").strip()
 
     def screenshot_bgr(self) -> np.ndarray:
         img = self.adb.screenshot_bgr()
-        sys_util.save_debug_image(img, "android_screen_bgr")
         return img
 
     def detect_current_map(self) -> Dict:
@@ -92,6 +97,7 @@ class AndroidMhxyBot:
         png_bytes = _pil_to_png_bytes(cropped)
         ocr_result = siliflow_client.siliconflow_paddleocr(png_bytes)
         map_name = str(ocr_result.get("content", "")).strip()
+        print(f"ocr_result: {ocr_result}, map_name: {map_name}")
         return {"map_name": map_name, "raw_ocr": ocr_result, "roi": [x1, y1, x2, y2]}
 
     def _match_once(self, img_bgr: np.ndarray, template_path: str, threshold: Optional[float] = None):
@@ -122,6 +128,82 @@ class AndroidMhxyBot:
         time.sleep(self.step_sleep_s)
         return pt
 
+    def cleanup_desktop(self) -> Dict:
+        thr_expand = float(os.getenv("ANDROID_THR_SYSTEM_EXPAND", str(self.match_threshold)) or self.match_threshold)
+        thr_hide_ui = float(os.getenv("ANDROID_THR_SYSTEM_HIDE_UI", str(self.match_threshold)) or self.match_threshold)
+        thr_hide_player = float(os.getenv("ANDROID_THR_SYSTEM_HIDE_PLAYER", str(self.match_threshold)) or self.match_threshold)
+        p1 = self._tap(self.tpl_system_expand, threshold=thr_expand)
+        p2 = self._tap(self.tpl_system_hide_ui, threshold=thr_hide_ui)
+        p3 = self._tap(self.tpl_system_hide_player, threshold=thr_hide_player)
+        return {"tap_expand": p1, "tap_hide_ui": p2, "tap_hide_player": p3}
+
+    def _ocr_text_from_roi_paddle(self, img_bgr: np.ndarray, roi: Tuple[int, int, int, int]) -> str:
+        x1, y1, x2, y2 = roi
+        pil_img = _bgr_to_pil(img_bgr)
+        cropped = pil_img.crop((x1, y1, x2, y2))
+        sys_util.save_debug_image(cropped, "android_coord_roi_cropped")
+        png_bytes = _pil_to_png_bytes(cropped)
+        ocr_result = siliflow_client.siliconflow_paddleocr(png_bytes)
+        return str(ocr_result.get("content", "")).strip()
+
+    def _ocr_text_from_roi_ddddocr(self, img_bgr: np.ndarray, roi: Tuple[int, int, int, int]) -> str:
+        import importlib
+
+        mod = importlib.import_module("ddddocr_util")
+        return str(mod.ocr_region(img_bgr, roi)).strip()
+
+    def _parse_coord_text(self, text: str) -> Optional[Tuple[int, int]]:
+        s = str(text or "").strip()
+        if not s:
+            return None
+        nums = re.findall(r"\d+", s)
+        if len(nums) >= 2:
+            return int(nums[0]), int(nums[1])
+        return None
+
+    def detect_coord_by_roi(self) -> Dict:
+        if not self.coord_roi_text:
+            raise RuntimeError("缺少 ANDROID_COORD_ROI")
+        roi = _parse_roi(self.coord_roi_text)
+        img_bgr = self.screenshot_bgr()
+        engine = self.coord_ocr_engine
+        text = ""
+        used_engine = engine
+        if engine == "ddddocr":
+            try:
+                text = self._ocr_text_from_roi_ddddocr(img_bgr, roi)
+            except Exception:
+                used_engine = "paddle"
+                text = self._ocr_text_from_roi_paddle(img_bgr, roi)
+        else:
+            text = self._ocr_text_from_roi_paddle(img_bgr, roi)
+        coord = self._parse_coord_text(text)
+        return {"coord": coord, "raw_text": text, "engine": used_engine, "roi": list(roi)}
+
+    def wait_until_arrived_by_coord(self) -> Dict:
+        max_wait_s = float(os.getenv("ANDROID_ARRIVAL_MAX_WAIT_S", "60") or "60")
+        interval_s = float(os.getenv("ANDROID_ARRIVAL_CHECK_INTERVAL_S", "1") or "1")
+        stable_need = int(os.getenv("ANDROID_ARRIVAL_STABLE_COUNT", "2") or "2")
+        deadline = time.time() + max(1.0, max_wait_s)
+        stable = 0
+        last = None
+        samples = 0
+
+        while time.time() < deadline:
+            r = self.detect_coord_by_roi()
+            samples += 1
+            coord = r.get("coord")
+            if coord is not None and coord == last:
+                stable += 1
+            else:
+                stable = 1 if coord is not None else 0
+                last = coord
+            if stable >= stable_need and last is not None:
+                return {"arrived": True, "coord": last, "samples": samples}
+            time.sleep(max(0.1, interval_s))
+
+        return {"arrived": False, "coord": last, "samples": samples}
+
     def go_to_dianxiaoer_in_changan(self) -> Dict:
         detected = self.detect_current_map()
         map_name = str(detected.get("map_name", "")).strip()
@@ -134,33 +216,45 @@ class AndroidMhxyBot:
         thr_dianxiaoer = float(os.getenv("ANDROID_THR_MAP_DIANXIAOER", str(self.match_threshold)) or self.match_threshold)
         thr_on_the_way = float(os.getenv("ANDROID_THR_MAP_ON_THE_WAY", str(self.match_threshold)) or self.match_threshold)
 
+        cleanup = self.cleanup_desktop()
         p1 = self._tap(self.tpl_map_button, threshold=0.6)
         p2 = self._tap(self.tpl_map_search_icon, threshold=thr_search_icon)
-        p3 = self._tap(self.tpl_map_input_icon, threshold=thr_input_icon)
+        used_typed_search = False
+        p3 = None
+        img_bgr = self.screenshot_bgr()
+        best = self._match_once(img_bgr, self.tpl_map_dianxiaoer, threshold=thr_dianxiaoer)
+        if best is not None:
+            p4 = self._tap_template(img_bgr, self.tpl_map_dianxiaoer, threshold=thr_dianxiaoer)
+            time.sleep(self.step_sleep_s)
+        else:
+            used_typed_search = True
+            p3 = self._tap(self.tpl_map_input_icon, threshold=thr_input_icon)
+            adb_ime = os.getenv("ANDROID_ADB_IME_ID", "com.android.adbkeyboard/.AdbIME").strip() or "com.android.adbkeyboard/.AdbIME"
+            sogou_ime = os.getenv("ANDROID_SOGOU_IME_ID", "com.sohu.inputmethod.sogou.xiaomi/.SogouIME").strip() or "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
+            self.adb.ime_set(adb_ime)
+            time.sleep(self.step_sleep_s)
+            self.adb.adbkeyboard_input_text("店小二")
+            time.sleep(self.step_sleep_s)
+            self.adb.keyevent(66)
+            time.sleep(self.step_sleep_s)
+            self.adb.ime_set(sogou_ime)
+            time.sleep(self.step_sleep_s)
+            p4 = self._tap(self.tpl_map_dianxiaoer, threshold=thr_dianxiaoer)
 
-        adb_ime = os.getenv("ANDROID_ADB_IME_ID", "com.android.adbkeyboard/.AdbIME").strip() or "com.android.adbkeyboard/.AdbIME"
-        sogou_ime = os.getenv("ANDROID_SOGOU_IME_ID", "com.sohu.inputmethod.sogou.xiaomi/.SogouIME").strip() or "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
-        self.adb.ime_set(adb_ime)
-        time.sleep(self.step_sleep_s)
-        self.adb.adbkeyboard_input_text("店小二")
-        time.sleep(self.step_sleep_s)
-        self.adb.keyevent(66)
-        time.sleep(self.step_sleep_s)
-        self.adb.ime_set(sogou_ime)
-        time.sleep(self.step_sleep_s)
-
-        p4 = self._tap(self.tpl_map_dianxiaoer, threshold=thr_dianxiaoer)
         p5 = self._tap(self.tpl_map_on_the_way, threshold=thr_on_the_way)
+        arrival = self.wait_until_arrived_by_coord()
 
         return {
             "ok": True,
             "map_name": map_name,
+            "cleanup": cleanup,
             "tap_map_button": p1,
             "tap_search_icon": p2,
+            "used_typed_search": used_typed_search,
             "tap_input_icon": p3,
-            "input_text": "店小二",
             "tap_dianxiaoer": p4,
             "tap_on_the_way": p5,
+            "arrival": arrival,
             "detected": detected,
         }
 
