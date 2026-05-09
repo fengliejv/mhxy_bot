@@ -71,6 +71,7 @@ class AndroidMhxyBot:
             raise RuntimeError("缺少 MHXY_MAP_ROI，请在 .env 配置，例如 0,0,120,120")
 
         self.tpl_map_button = os.getenv("ANDROID_TPL_MAP_BUTTON", "assets/android/map/map_button.jpg").strip() or "assets/android/map/map_button.jpg"
+        self.tpl_map_button_2 = os.getenv("ANDROID_TPL_MAP_BUTTON_2", "assets/android/map/map_button2.png").strip() or "assets/android/map/map_button2.png"
         self.tpl_map_search_icon = os.getenv("ANDROID_TPL_MAP_SEARCH_ICON", "assets/android/map/map_search_icon.png").strip() or "assets/android/map/map_search_icon.png"
         self.tpl_map_input_icon = os.getenv("ANDROID_TPL_MAP_INPUT_ICON", "assets/android/map/map_input_icon.png").strip() or "assets/android/map/map_input_icon.png"
         self.tpl_map_dianxiaoer = os.getenv("ANDROID_TPL_MAP_DIANXIAOER", "assets/android/map/map_dianxiaoer.png").strip() or "assets/android/map/map_dianxiaoer.png"
@@ -78,12 +79,15 @@ class AndroidMhxyBot:
         self.tpl_system_expand = os.getenv("ANDROID_TPL_SYSTEM_EXPAND", "assets/android/system/expand.jpg").strip() or "assets/android/system/expand.jpg"
         self.tpl_system_hide_ui = os.getenv("ANDROID_TPL_SYSTEM_HIDE_UI", "assets/android/system/yincangjiemian.jpg").strip() or "assets/android/system/yincangjiemian.jpg"
         self.tpl_system_hide_player = os.getenv("ANDROID_TPL_SYSTEM_HIDE_PLAYER", "assets/android/system/yincangwanjia.jpg").strip() or "assets/android/system/yincangwanjia.jpg"
+        self.tpl_npc_dianxiaoer_1 = os.getenv("ANDROID_TPL_NPC_DIANXIAOER_1", "assets/android/npc/dianxiaoer1.jpg").strip() or "assets/android/npc/dianxiaoer1.jpg"
+        self.tpl_npc_dianxiaoer_2 = os.getenv("ANDROID_TPL_NPC_DIANXIAOER_2", "assets/android/npc/dianxiaoer2.png").strip() or "assets/android/npc/dianxiaoer2.png"
 
         self.match_threshold = float(os.getenv("ANDROID_MATCH_THRESHOLD", "0.8").strip() or "0.8")
         self.step_sleep_s = float(os.getenv("ANDROID_STEP_SLEEP_S", "0.4").strip() or "0.4")
         self.coord_ocr_engine = (os.getenv("ANDROID_COORD_OCR_ENGINE", "paddle").strip() or "paddle").lower()
         self.coord_roi_text = os.getenv("ANDROID_COORD_ROI", "").strip()
-
+        self._tpl_wh_cache: Dict[str, Tuple[int, int]] = {}
+        
     def screenshot_bgr(self) -> np.ndarray:
         img = self.adb.screenshot_bgr()
         return img
@@ -128,14 +132,112 @@ class AndroidMhxyBot:
         time.sleep(self.step_sleep_s)
         return pt
 
+    def _try_tap(self, template_path: str, threshold: Optional[float] = None, extra_offset: Tuple[int, int] = (0, 0)) -> Optional[Tuple[int, int]]:
+        img_bgr = self.screenshot_bgr()
+        best = self._match_once(img_bgr, template_path, threshold=threshold)
+        if best is None:
+            return None
+        (top_left, _) = best
+        cx, cy = _template_center_from_top_left(template_path, top_left, extra_offset=extra_offset)
+        try:
+            dbg = img_bgr.copy()
+            cv2.drawMarker(dbg, (int(cx), int(cy)), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=40, thickness=2)
+            sys_util.save_debug_image(dbg, f"android_tap_{os.path.basename(template_path)}_{cx}_{cy}")
+        except Exception:
+            pass
+        self.adb.tap(cx, cy)
+        time.sleep(self.step_sleep_s)
+        return cx, cy
+
     def cleanup_desktop(self) -> Dict:
         thr_expand = float(os.getenv("ANDROID_THR_SYSTEM_EXPAND", str(self.match_threshold)) or self.match_threshold)
         thr_hide_ui = float(os.getenv("ANDROID_THR_SYSTEM_HIDE_UI", str(self.match_threshold)) or self.match_threshold)
         thr_hide_player = float(os.getenv("ANDROID_THR_SYSTEM_HIDE_PLAYER", str(self.match_threshold)) or self.match_threshold)
-        p1 = self._tap(self.tpl_system_expand, threshold=thr_expand)
-        p2 = self._tap(self.tpl_system_hide_ui, threshold=thr_hide_ui)
-        p3 = self._tap(self.tpl_system_hide_player, threshold=thr_hide_player)
+        p1 = self._try_tap(self.tpl_system_expand, threshold=thr_expand)
+        p2 = self._try_tap(self.tpl_system_hide_ui, threshold=thr_hide_ui)
+        p3 = self._try_tap(self.tpl_system_hide_player, threshold=thr_hide_player)
         return {"tap_expand": p1, "tap_hide_ui": p2, "tap_hide_player": p3}
+
+    def _get_template_wh(self, template_path: str) -> Tuple[int, int]:
+        cached = self._tpl_wh_cache.get(template_path)
+        if cached is not None:
+            return cached
+        tpl = cv2.imread(template_path)
+        if tpl is None:
+            raise RuntimeError(f"模板读取失败: {template_path}")
+        h, w = tpl.shape[:2]
+        self._tpl_wh_cache[template_path] = (w, h)
+        return w, h
+
+    def _match_best_of_templates(self, img_bgr: np.ndarray, template_paths, threshold: float):
+        best = None
+        for tpl in template_paths:
+            ok, _, locations = match_template(img_bgr, tpl, threshold=threshold, find_all=True)
+            if not ok or not locations:
+                continue
+            loc = _pick_best_location(locations)
+            if loc is None:
+                continue
+            (top_left, conf) = loc
+            if best is None or conf > best["confidence"]:
+                best = {"template": tpl, "top_left": top_left, "confidence": conf}
+        return best
+
+    def _tap_matched_center(self, img_bgr: np.ndarray, template_path: str, top_left: Tuple[int, int], extra_offset: Tuple[int, int] = (0, 0)) -> Tuple[int, int]:
+        cx, cy = _template_center_from_top_left(template_path, top_left, extra_offset=extra_offset)
+        try:
+            dbg = img_bgr.copy()
+            cv2.drawMarker(dbg, (int(cx), int(cy)), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=40, thickness=2)
+            sys_util.save_debug_image(dbg, f"android_tap_{os.path.basename(template_path)}_{cx}_{cy}")
+        except Exception:
+            pass
+        self.adb.tap(cx, cy)
+        return cx, cy
+
+    def tap_map_button(self, threshold: float = 0.6) -> Tuple[int, int]:
+        img_bgr = self.screenshot_bgr()
+        matched = self._match_best_of_templates(
+            img_bgr,
+            [self.tpl_map_button, self.tpl_map_button_2],
+            threshold=threshold,
+        )
+        if matched is None:
+            raise RuntimeError("地图按钮模板匹配失败")
+        return self._tap_matched_center(img_bgr, str(matched["template"]), matched["top_left"])
+
+    def talk_to_dianxiaoer(self) -> Dict:
+        img_bgr = self.screenshot_bgr()
+        matched = self._match_best_of_templates(
+            img_bgr,
+            [self.tpl_npc_dianxiaoer_1, self.tpl_npc_dianxiaoer_2],
+            threshold=0.4,
+        )
+        if matched is None:
+            return {"ok": False, "reason": "npc_not_found", "cleanup": cleanup}
+
+        tpl = str(matched["template"])
+        top_left = matched["top_left"]
+        conf = float(matched["confidence"])
+        w, h = self._get_template_wh(tpl)
+        margin = max(5, int(w * 0.1))
+        margin = min(margin, max(1, w - 1))
+        x_edge = int(top_left[0] + margin)
+        y_edge = int(top_left[1] + h / 2)
+        x_center = int(top_left[0] + w / 2)
+        y_center = int(top_left[1] + h / 2)
+
+        self.adb.tap(x_edge, y_edge)
+        time.sleep(2.0)
+        self.adb.tap(x_center, y_center)
+        time.sleep(self.step_sleep_s)
+        return {
+            "ok": True,
+            "cleanup": cleanup,
+            "template": tpl,
+            "confidence": conf,
+            "tap_edge": (x_edge, y_edge),
+            "tap_center": (x_center, y_center),
+        }
 
     def _ocr_text_from_roi_paddle(self, img_bgr: np.ndarray, roi: Tuple[int, int, int, int]) -> str:
         x1, y1, x2, y2 = roi
@@ -205,6 +307,8 @@ class AndroidMhxyBot:
         return {"arrived": False, "coord": last, "samples": samples}
 
     def go_to_dianxiaoer_in_changan(self) -> Dict:
+        cleanup = self.cleanup_desktop()
+
         detected = self.detect_current_map()
         map_name = str(detected.get("map_name", "")).strip()
         if "长安城" not in map_name:
@@ -216,8 +320,8 @@ class AndroidMhxyBot:
         thr_dianxiaoer = float(os.getenv("ANDROID_THR_MAP_DIANXIAOER", str(self.match_threshold)) or self.match_threshold)
         thr_on_the_way = float(os.getenv("ANDROID_THR_MAP_ON_THE_WAY", str(self.match_threshold)) or self.match_threshold)
 
-        cleanup = self.cleanup_desktop()
-        p1 = self._tap(self.tpl_map_button, threshold=0.6)
+        p1 = self.tap_map_button(threshold=0.6)
+        time.sleep(self.step_sleep_s)
         p2 = self._tap(self.tpl_map_search_icon, threshold=thr_search_icon)
         used_typed_search = False
         p3 = None
@@ -243,11 +347,11 @@ class AndroidMhxyBot:
 
         p5 = self._tap(self.tpl_map_on_the_way, threshold=thr_on_the_way)
         arrival = self.wait_until_arrived_by_coord()
+        talk = self.talk_to_dianxiaoer() if arrival.get("arrived") else {"ok": False, "reason": "not_arrived"}
 
         return {
             "ok": True,
             "map_name": map_name,
-            "cleanup": cleanup,
             "tap_map_button": p1,
             "tap_search_icon": p2,
             "used_typed_search": used_typed_search,
@@ -255,11 +359,23 @@ class AndroidMhxyBot:
             "tap_dianxiaoer": p4,
             "tap_on_the_way": p5,
             "arrival": arrival,
+            "talk": talk,
             "detected": detected,
         }
 
 
 def main() -> None:
+    import shutil
+    debug_dir = "debug_capture"
+    if os.path.isdir(debug_dir):
+        for f in os.listdir(debug_dir):
+            fp = os.path.join(debug_dir, f)
+            try:
+                if os.path.isfile(fp):
+                    os.remove(fp)
+            except Exception:
+                pass
+    shutil.rmtree(debug_dir)
     sys_util.load_dotenv()
 
     bot = AndroidMhxyBot()
