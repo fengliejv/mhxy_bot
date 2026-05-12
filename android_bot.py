@@ -4,6 +4,7 @@ import os
 import re
 import time
 from typing import Dict, Optional, Tuple
+from unittest import result
 
 import cv2
 import numpy as np
@@ -76,11 +77,25 @@ class AndroidMhxyBot:
         self.tpl_map_exit = os.getenv("ANDROID_TPL_MAP_EXIT", "assets/android/map/map_exit.jpg").strip() or "assets/android/map/map_exit.jpg"
         self.tpl_map_dianxiaoer = os.getenv("ANDROID_TPL_MAP_DIANXIAOER", "assets/android/map/map_dianxiaoer.png").strip() or "assets/android/map/map_dianxiaoer.png"
         self.tpl_map_on_the_way = os.getenv("ANDROID_TPL_MAP_ON_THE_WAY", "assets/android/map/map_on_the_way.png").strip() or "assets/android/map/map_on_the_way.png"
+        self.tpl_menu_daoju = os.getenv("ANDROID_TPL_MENU_DAOJU", "assets/android/memu/daoju.jpg").strip() or "assets/android/memu/daoju.jpg"
+        self.tpl_prop_changan_flag = os.getenv("ANDROID_TPL_PROP_CHANGAN_FLAG", "assets/android/daoju/changandaobiaoqi.png").strip() or "assets/android/daoju/changandaobiaoqi.png"
+        self.tpl_prop_use = os.getenv("ANDROID_TPL_PROP_USE", "assets/android/daoju/jiemian/shiyong.png").strip() or "assets/android/daoju/jiemian/shiyong.png"
+        self.tpl_map_teleport_point = os.getenv("ANDROID_TPL_MAP_TELEPORT_POINT", "assets/android/map/daobiaoqiditu/chuansongdian.png").strip() or "assets/android/map/daobiaoqiditu/chuansongdian.png"
+        self.tpl_baotu_receive_task = os.getenv("ANDROID_TPL_BAOTU_RECEIVE_TASK", "assets/android/baotu/tingtingwufang.png").strip() or "assets/android/baotu/tingtingwufang.png"
+        self.tpl_changan_hotel_door = os.getenv("ANDROID_TPL_CHANGAN_HOTEL_DOOR", "assets/android/changancheng/jiudianmenkou.png").strip() or "assets/android/changancheng/jiudianmenkou.png"
+        self.tpl_system_close_guide = os.getenv("ANDROID_TPL_SYSTEM_CLOSE_GUIDE", "assets/android/system/guanbizhiyin.png").strip() or "assets/android/system/guanbizhiyin.png"
+        self.tpl_system_close_task = os.getenv("ANDROID_TPL_SYSTEM_CLOSE_TASK", "assets/android/system/close_task.jpg").strip() or "assets/android/system/close_task.jpg"
+        self.tpl_system_hide_dialog = os.getenv("ANDROID_TPL_SYSTEM_HIDE_DIALOG", "assets/android/system/yincangduihua.png").strip() or "assets/android/system/yincangduihua.png"
+        self.tpl_system_auto_attack_shrink = os.getenv("ANDROID_TPL_SYSTEM_AUTO_ATTACK_SHRINK", "assets/android/system/zidonggongjisuoxiao.png").strip() or "assets/android/system/zidonggongjisuoxiao.png"
         self.tpl_system_expand = os.getenv("ANDROID_TPL_SYSTEM_EXPAND", "assets/android/system/expand.jpg").strip() or "assets/android/system/expand.jpg"
         self.tpl_system_hide_ui = os.getenv("ANDROID_TPL_SYSTEM_HIDE_UI", "assets/android/system/yincangjiemian.jpg").strip() or "assets/android/system/yincangjiemian.jpg"
         self.tpl_system_hide_player = os.getenv("ANDROID_TPL_SYSTEM_HIDE_PLAYER", "assets/android/system/yincangwanjia.jpg").strip() or "assets/android/system/yincangwanjia.jpg"
-        self.tpl_npc_dianxiaoer_1 = os.getenv("ANDROID_TPL_NPC_DIANXIAOER_1", "assets/android/npc/dianxiaoer1.jpg").strip() or "assets/android/npc/dianxiaoer1.jpg"
+        self.tpl_system_hide_ui_disable = os.getenv("ANDROID_TPL_SYSTEM_HIDE_UI_DISABLE", "assets/android/system/yincangjiemian_disable.png").strip() or "assets/android/system/yincangjiemian_disable.png"
+        self.tpl_system_hide_player_disable = os.getenv("ANDROID_TPL_SYSTEM_HIDE_PLAYER_DISABLE", "assets/android/system/yincangwanjia_disable.png").strip() or "assets/android/system/yincangwanjia_disable.png"
+        self.tpl_system_back = os.getenv("ANDROID_TPL_SYSTEM_BACK", "assets/android/system/back.jpg").strip() or "assets/android/system/back.jpg"
+        self.tpl_npc_dianxiaoer_1 = os.getenv("ANDROID_TPL_NPC_DIANXIAOER_1", "assets/android/npc/dianxiaoer1.png").strip() or "assets/android/npc/dianxiaoer1.png"
         self.tpl_npc_dianxiaoer_2 = os.getenv("ANDROID_TPL_NPC_DIANXIAOER_2", "assets/android/npc/dianxiaoer2.png").strip() or "assets/android/npc/dianxiaoer2.png"
+        self.tpl_npc_dianxiaoer_3 = os.getenv("ANDROID_TPL_NPC_DIANXIAOER_3", "assets/android/npc/dianxiaoer3.png").strip() or "assets/android/npc/dianxiaoer3.png"
 
         self.match_threshold = float(os.getenv("ANDROID_MATCH_THRESHOLD", "0.8").strip() or "0.8")
         self.step_sleep_s = float(os.getenv("ANDROID_STEP_SLEEP_S", "0.4").strip() or "0.4")
@@ -152,13 +167,36 @@ class AndroidMhxyBot:
         return cx, cy
 
     def cleanup_desktop(self) -> Dict:
+        thr_close_guide = float(os.getenv("ANDROID_THR_SYSTEM_CLOSE_GUIDE", str(self.match_threshold)) or self.match_threshold)
+        thr_close_task = float(os.getenv("ANDROID_THR_SYSTEM_CLOSE_TASK", str(self.match_threshold)) or self.match_threshold)
+        thr_hide_dialog = float(os.getenv("ANDROID_THR_SYSTEM_HIDE_DIALOG", str(self.match_threshold)) or self.match_threshold)
+        thr_auto_attack_shrink = float(os.getenv("ANDROID_THR_SYSTEM_AUTO_ATTACK_SHRINK", str(self.match_threshold)) or self.match_threshold)
         thr_expand = float(os.getenv("ANDROID_THR_SYSTEM_EXPAND", str(self.match_threshold)) or self.match_threshold)
-        thr_hide_ui = float(os.getenv("ANDROID_THR_SYSTEM_HIDE_UI", str(self.match_threshold)) or self.match_threshold)
-        thr_hide_player = float(os.getenv("ANDROID_THR_SYSTEM_HIDE_PLAYER", str(self.match_threshold)) or self.match_threshold)
-        p1 = self._try_tap(self.tpl_system_expand, threshold=thr_expand)
-        p2 = self._try_tap(self.tpl_system_hide_ui, threshold=thr_hide_ui)
-        p3 = self._try_tap(self.tpl_system_hide_player, threshold=thr_hide_player)
-        return {"tap_expand": p1, "tap_hide_ui": p2, "tap_hide_player": p3}
+        thr_hide_ui_disable = float(os.getenv("ANDROID_THR_SYSTEM_HIDE_UI_DISABLE", str(self.match_threshold)) or self.match_threshold)
+        thr_hide_player_disable = float(os.getenv("ANDROID_THR_SYSTEM_HIDE_PLAYER_DISABLE", str(self.match_threshold)) or self.match_threshold)
+        thr_back = float(os.getenv("ANDROID_THR_SYSTEM_BACK", str(self.match_threshold)) or self.match_threshold)
+
+        p_close_guide = self._try_tap(self.tpl_system_close_guide, threshold=thr_close_guide)
+        p_close_task = self._try_tap(self.tpl_system_close_task, threshold=thr_close_task)
+        p_hide_dialog = self._try_tap(self.tpl_system_hide_dialog, threshold=thr_hide_dialog)
+        p_auto_attack_shrink = self._try_tap(self.tpl_system_auto_attack_shrink, threshold=thr_auto_attack_shrink)
+
+        p_expand = self._try_tap(self.tpl_system_expand, threshold=thr_expand)
+        p_hide_ui_disable = self._try_tap(self.tpl_system_hide_ui_disable, threshold=thr_hide_ui_disable) if p_expand is not None else None
+        p_hide_player_disable = self._try_tap(self.tpl_system_hide_player_disable, threshold=thr_hide_player_disable) if p_expand is not None else None
+
+        p_back = self._try_tap(self.tpl_system_back, threshold=thr_back) if p_expand is not None else None
+
+        return {
+            "tap_close_guide": p_close_guide,
+            "tap_close_task": p_close_task,
+            "tap_hide_dialog": p_hide_dialog,
+            "tap_auto_attack_shrink": p_auto_attack_shrink,
+            "tap_expand": p_expand,
+            "tap_hide_ui_disable": p_hide_ui_disable,
+            "tap_hide_player_disable": p_hide_player_disable,
+            "tap_back": p_back,
+        }
 
     def _get_template_wh(self, template_path: str) -> Tuple[int, int]:
         cached = self._tpl_wh_cache.get(template_path)
@@ -184,6 +222,18 @@ class AndroidMhxyBot:
             if best is None or conf > best["confidence"]:
                 best = {"template": tpl, "top_left": top_left, "confidence": conf}
         return best
+
+    def _match_first_of_templates(self, img_bgr: np.ndarray, template_paths, threshold: float):
+        for tpl in template_paths:
+            ok, _, locations = match_template(img_bgr, tpl, threshold=threshold, find_all=True)
+            if not ok or not locations:
+                continue
+            loc = _pick_best_location(locations)
+            if loc is None:
+                continue
+            (top_left, conf) = loc
+            return {"template": tpl, "top_left": top_left, "confidence": conf}
+        return None
 
     def _tap_matched_center(self, img_bgr: np.ndarray, template_path: str, top_left: Tuple[int, int], extra_offset: Tuple[int, int] = (0, 0)) -> Tuple[int, int]:
         cx, cy = _template_center_from_top_left(template_path, top_left, extra_offset=extra_offset)
@@ -227,8 +277,8 @@ class AndroidMhxyBot:
         img_bgr = self.screenshot_bgr()
         matched = self._match_best_of_templates(
             img_bgr,
-            [self.tpl_npc_dianxiaoer_1, self.tpl_npc_dianxiaoer_2],
-            threshold=0.4,
+            [self.tpl_npc_dianxiaoer_1, self.tpl_npc_dianxiaoer_2, self.tpl_npc_dianxiaoer_3],
+            threshold=0.5,
         )
         if matched is None:
             return {"ok": False, "reason": "npc_not_found", "cleanup": cleanup}
@@ -420,9 +470,116 @@ class AndroidMhxyBot:
 
         return {"arrived": False, "coord": last, "samples": samples}
 
-    def go_to_dianxiaoer_in_changan(self) -> Dict:
-        cleanup = self.cleanup_desktop()
+    def fly_to_hotel(self) -> Dict:
+        thr_menu_daoju = float(os.getenv("ANDROID_THR_MENU_DAOJU", str(self.match_threshold)) or self.match_threshold)
+        thr_prop_changan_flag = float(os.getenv("ANDROID_THR_PROP_CHANGAN_FLAG", str(self.match_threshold)) or self.match_threshold)
+        thr_prop_use = float(os.getenv("ANDROID_THR_PROP_USE", str(self.match_threshold)) or self.match_threshold)
+        thr_teleport_point = float(os.getenv("ANDROID_THR_MAP_TELEPORT_POINT", str(self.match_threshold)) or self.match_threshold)
 
+        p_menu_daoju = self._tap(self.tpl_menu_daoju, threshold=thr_menu_daoju)
+        p_changan_flag = self._tap(self.tpl_prop_changan_flag, threshold=thr_prop_changan_flag)
+        p_use = self._tap(self.tpl_prop_use, threshold=thr_prop_use)
+
+        target_x = int(os.getenv("ANDROID_TELEPORT_TARGET_X", "1640") or "1640")
+        target_y = int(os.getenv("ANDROID_TELEPORT_TARGET_Y", "500") or "500")
+
+        img_bgr = self.screenshot_bgr()
+        ok, _, locations = match_template(img_bgr, self.tpl_map_teleport_point, threshold=thr_teleport_point, find_all=True)
+        if not ok or not locations:
+            return {
+                "ok": False,
+                "reason": "teleport_point_not_found",
+                "tap_menu_daoju": p_menu_daoju,
+                "tap_changan_flag": p_changan_flag,
+                "tap_use": p_use,
+            }
+
+        best = None
+        for (top_left, conf) in locations:
+            cx, cy = _template_center_from_top_left(self.tpl_map_teleport_point, top_left, extra_offset=(0, 0))
+            dx = cx - target_x
+            dy = cy - target_y
+            dist2 = dx * dx + dy * dy
+            item = {"top_left": top_left, "confidence": float(conf), "center": (cx, cy), "dist2": int(dist2)}
+            if best is None or item["dist2"] < best["dist2"]:
+                best = item
+
+        tap_teleport = self._tap_matched_center(img_bgr, self.tpl_map_teleport_point, best["top_left"])
+        time.sleep(self.step_sleep_s)
+
+        return {
+            "ok": True,
+            "tap_menu_daoju": p_menu_daoju,
+            "tap_changan_flag": p_changan_flag,
+            "tap_use": p_use,
+            "target": (target_x, target_y),
+            "teleport_point_best": best,
+            "tap_teleport": tap_teleport,
+            "teleport_point_count": int(len(locations)),
+        }
+    
+    def recieve_baotu_task(self) -> Dict:
+        max_retry = 10
+        thr_receive_task = float(os.getenv("ANDROID_THR_BAOTU_RECEIVE_TASK", str(self.match_threshold)) or self.match_threshold)
+        attempts = []
+
+        for i in range(1, max_retry + 1):
+            step = self.go_to_xiaoer()
+            img_bgr = self.screenshot_bgr()
+            best_task = self._match_once(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
+            if best_task is not None:
+                (top_left, conf) = best_task
+                p_task = self._tap_template(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
+                return {
+                    "ok": True,
+                    "attempt": i,
+                    "step": step,
+                    "receive_task": {"template": self.tpl_baotu_receive_task, "top_left": top_left, "confidence": float(conf), "tap": p_task},
+                }
+            attempts.append({"attempt": i, "step": step, "receive_task": None})
+
+        raise RuntimeError(f"领取宝图任务失败，重试超过{max_retry}次: {attempts}")
+
+    def go_to_xiaoer(self) -> Dict:
+        thr_expand = float(os.getenv("ANDROID_THR_SYSTEM_EXPAND", str(self.match_threshold)) or self.match_threshold)
+        thr_xiaoer = float(os.getenv("ANDROID_THR_NPC_XIAOER", "0.4") or "0.4")
+        thr_back = float(os.getenv("ANDROID_THR_SYSTEM_BACK", str(self.match_threshold)) or self.match_threshold)
+
+        p_expand = self._try_tap(self.tpl_system_expand, threshold=thr_expand)
+
+        img_bgr = self.screenshot_bgr()
+        matched = self._match_first_of_templates(img_bgr, [self.tpl_npc_dianxiaoer_1, self.tpl_npc_dianxiaoer_2, self.tpl_npc_dianxiaoer_3], threshold=thr_xiaoer)
+        if matched is None:
+            return {"ok": False, "reason": "npc_not_found", "tap_expand": p_expand}
+
+        tpl = str(matched["template"])
+        top_left = matched["top_left"]
+        conf = float(matched["confidence"])
+        p_center = self._tap_matched_center(img_bgr, tpl, top_left)
+        p_back = self._tap(self.tpl_system_back, threshold=thr_back)
+        time.sleep(self.step_sleep_s)
+
+        return {
+            "ok": True,
+            "tap_expand": p_expand,
+            "template": tpl,
+            "confidence": conf,
+            "top_left": top_left,
+            "tap_center": p_center,
+            "tap_back": p_back,
+        }
+
+    def enter_hotel(self) -> Dict:
+        thr_expand = float(os.getenv("ANDROID_THR_SYSTEM_EXPAND", str(self.match_threshold)) or self.match_threshold)
+        thr_hotel_door = float(os.getenv("ANDROID_THR_CHANGAN_HOTEL_DOOR", str(self.match_threshold)) or self.match_threshold)
+        thr_back = float(os.getenv("ANDROID_THR_SYSTEM_BACK", str(self.match_threshold)) or self.match_threshold)
+
+        p_expand = self._tap(self.tpl_system_expand, threshold=thr_expand)
+        p_hotel_door = self._tap(self.tpl_changan_hotel_door, threshold=thr_hotel_door)
+        p_back = self._tap(self.tpl_system_back, threshold=thr_back)
+        return {"ok": True, "tap_expand": p_expand, "tap_hotel_door": p_hotel_door, "tap_back": p_back}
+
+    def go_to_dianxiaoer_in_changan(self) -> Dict:
         detected = self.detect_current_map()
         map_name = str(detected.get("map_name", "")).strip()
         if "长安城" not in map_name:
@@ -496,7 +653,11 @@ def main() -> None:
     sys_util.load_dotenv()
 
     bot = AndroidMhxyBot()
-    result = bot.go_to_dianxiaoer_in_changan()
+    # bot.cleanup_desktop()
+    # result = bot.fly_to_hotel()
+    # result = bot.enter_hotel()
+    result = bot.recieve_baotu_task()
+
     for k, v in result.items():
         print(f"{k}: {v}")
 
