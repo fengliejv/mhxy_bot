@@ -3,6 +3,7 @@ import base64  # base64 编解码
 import json  # JSON 序列化与反序列化
 import os  # 文件路径与环境变量
 import sys  # 进程参数与退出码
+import socket
 import urllib.error  # urllib 的异常类型
 import urllib.request  # 发起 HTTP 请求
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union  # 类型标注
@@ -59,6 +60,8 @@ def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str], timeo
         raise RuntimeError(f"HTTP {e.code} {e.reason}: {raw}".strip()) from e  # 抛出带上下文的异常
     except urllib.error.URLError as e:  # 网络层错误（DNS/连接失败等）
         raise RuntimeError(f"请求失败: {e.reason}") from e  # 抛出统一的运行时错误
+    except (socket.timeout, TimeoutError) as e:
+        raise RuntimeError("请求超时") from e
 
 
 def _strip_json_fence(text: str) -> str:  # 去掉 LLM 常见的 ```json ... ``` 围栏，便于解析
@@ -88,7 +91,7 @@ def siliconflow_chat_completions(  # 调用 SiliconFlow 的 /chat/completions �
     messages: Sequence[Dict[str, Any]],  # OpenAI 风格 messages
     temperature: float = 0.0,  # 采样温度
     max_tokens: int = 2048,  # 最大输出 token
-    timeout_s: float = 60.0,  # 请求超时时间（秒）
+    timeout_s: float = 120.0,  # 请求超时时间（秒）
     extra: Optional[Dict[str, Any]] = None,  # 额外透传字段（如 response_format 等）
 ) -> Dict[str, Any]:  # 返回 API 的 JSON 响应 dict
     api_key = os.getenv("SILICONFLOW_API_KEY", "").strip()  # 读取/覆盖 API Key
@@ -111,7 +114,8 @@ def siliconflow_chat_completions(  # 调用 SiliconFlow 的 /chat/completions �
         "Authorization": f"Bearer {api_key}",  # Bearer Token 认证
         "Content-Type": "application/json",  # JSON 请求体
     }  # headers 结束
-    return _post_json(url, payload, headers=headers, timeout_s=timeout_s)  # 发送请求并返回响应
+    effective_timeout = float(os.getenv("SILICONFLOW_TIMEOUT_S", str(timeout_s)) or timeout_s)
+    return _post_json(url, payload, headers=headers, timeout_s=effective_timeout)  # 发送请求并返回响应
 
 
 def siliconflow_paddleocr(  # 用 PaddleOCR-VL 作为多模态 OCR：输入图片，输出文本

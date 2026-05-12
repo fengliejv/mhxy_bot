@@ -67,13 +67,13 @@ class AndroidMhxyBot:
     def __init__(self, adb: Optional[AdbClient] = None) -> None:
         self.adb = adb or AdbClient()
         self.map_roi_text = os.getenv("MHXY_MAP_ROI", "").strip()
-        if not self.map_roi_text:
-            raise RuntimeError("缺少 MHXY_MAP_ROI，请在 .env 配置，例如 0,0,120,120")
 
         self.tpl_map_button = os.getenv("ANDROID_TPL_MAP_BUTTON", "assets/android/map/map_button.jpg").strip() or "assets/android/map/map_button.jpg"
         self.tpl_map_button_2 = os.getenv("ANDROID_TPL_MAP_BUTTON_2", "assets/android/map/map_button2.png").strip() or "assets/android/map/map_button2.png"
         self.tpl_map_search_icon = os.getenv("ANDROID_TPL_MAP_SEARCH_ICON", "assets/android/map/map_search_icon.png").strip() or "assets/android/map/map_search_icon.png"
         self.tpl_map_input_icon = os.getenv("ANDROID_TPL_MAP_INPUT_ICON", "assets/android/map/map_input_icon.png").strip() or "assets/android/map/map_input_icon.png"
+        self.tpl_map_go = os.getenv("ANDROID_TPL_MAP_GO", "assets/android/map/map_go.jpg").strip() or "assets/android/map/map_go.jpg"
+        self.tpl_map_exit = os.getenv("ANDROID_TPL_MAP_EXIT", "assets/android/map/map_exit.jpg").strip() or "assets/android/map/map_exit.jpg"
         self.tpl_map_dianxiaoer = os.getenv("ANDROID_TPL_MAP_DIANXIAOER", "assets/android/map/map_dianxiaoer.png").strip() or "assets/android/map/map_dianxiaoer.png"
         self.tpl_map_on_the_way = os.getenv("ANDROID_TPL_MAP_ON_THE_WAY", "assets/android/map/map_on_the_way.png").strip() or "assets/android/map/map_on_the_way.png"
         self.tpl_system_expand = os.getenv("ANDROID_TPL_SYSTEM_EXPAND", "assets/android/system/expand.jpg").strip() or "assets/android/system/expand.jpg"
@@ -93,6 +93,8 @@ class AndroidMhxyBot:
         return img
 
     def detect_current_map(self) -> Dict:
+        if not self.map_roi_text:
+            raise RuntimeError("缺少 MHXY_MAP_ROI，请在 .env 配置，例如 0,0,120,120")
         x1, y1, x2, y2 = _parse_roi(self.map_roi_text)
         img_bgr = self.screenshot_bgr()
         pil_img = _bgr_to_pil(img_bgr)
@@ -194,6 +196,21 @@ class AndroidMhxyBot:
         self.adb.tap(cx, cy)
         return cx, cy
 
+    def match_best(self, template_paths, threshold: float = 0.8) -> Optional[Dict]:
+        img_bgr = self.screenshot_bgr()
+        return self._match_best_of_templates(img_bgr, template_paths, threshold=threshold)
+
+    def try_tap_best(self, template_paths, threshold: float = 0.8, extra_offset: Tuple[int, int] = (0, 0), sleep_after: Optional[float] = None) -> Optional[Dict]:
+        img_bgr = self.screenshot_bgr()
+        matched = self._match_best_of_templates(img_bgr, template_paths, threshold=threshold)
+        if matched is None:
+            return None
+        tpl = str(matched["template"])
+        top_left = matched["top_left"]
+        pt = self._tap_matched_center(img_bgr, tpl, top_left, extra_offset=extra_offset)
+        time.sleep(self.step_sleep_s if sleep_after is None else float(sleep_after))
+        return {"template": tpl, "top_left": top_left, "confidence": float(matched["confidence"]), "tap": pt}
+
     def tap_map_button(self, threshold: float = 0.6) -> Tuple[int, int]:
         img_bgr = self.screenshot_bgr()
         matched = self._match_best_of_templates(
@@ -206,6 +223,7 @@ class AndroidMhxyBot:
         return self._tap_matched_center(img_bgr, str(matched["template"]), matched["top_left"])
 
     def talk_to_dianxiaoer(self) -> Dict:
+        cleanup = self.cleanup_desktop()
         img_bgr = self.screenshot_bgr()
         matched = self._match_best_of_templates(
             img_bgr,
@@ -239,6 +257,98 @@ class AndroidMhxyBot:
             "tap_center": (x_center, y_center),
         }
 
+    def map_search_and_go(self, keyword: str, result_roi: Optional[Tuple[int, int, int, int]] = None) -> Dict:
+        import vl_locator
+
+        kw = str(keyword or "").strip()
+        if not kw:
+            raise RuntimeError("keyword 不能为空")
+
+        def _tap_text_once(candidates, roi: Optional[Tuple[int, int, int, int]] = None):
+            img_local = self.screenshot_bgr()
+            for txt in candidates:
+                try:
+                    located_local = vl_locator.locate_text_center(img_local, str(txt), roi=roi)
+                except Exception:
+                    located_local = None
+                if located_local is None:
+                    continue
+                x_local = int(located_local["x"])
+                y_local = int(located_local["y"])
+                self.adb.tap(x_local, y_local)
+                time.sleep(self.step_sleep_s)
+                return (x_local, y_local)
+            return None
+
+        thr_search_icon = float(os.getenv("ANDROID_THR_MAP_SEARCH_ICON", str(self.match_threshold)) or self.match_threshold)
+        thr_input_icon = float(os.getenv("ANDROID_THR_MAP_INPUT_ICON", str(self.match_threshold)) or self.match_threshold)
+        thr_go = float(os.getenv("ANDROID_THR_MAP_GO", "0.6") or "0.6")
+
+        p1 = self.tap_map_button(threshold=0.6)
+        time.sleep(self.step_sleep_s)
+        try:
+            p2 = self._tap(self.tpl_map_search_icon, threshold=thr_search_icon)
+        except Exception:
+            img0 = self.screenshot_bgr()
+            h0, w0 = img0.shape[:2]
+            roi_top = (int(w0 * 0.50), 0, w0, int(h0 * 0.24))
+            p2 = _tap_text_once(["搜索", "查找"], roi=roi_top)
+            if p2 is None:
+                p2 = (int(w0 * 0.86), int(h0 * 0.10))
+                self.adb.tap(*p2)
+                time.sleep(self.step_sleep_s)
+        try:
+            p3 = self._tap(self.tpl_map_input_icon, threshold=thr_input_icon)
+        except Exception:
+            img1 = self.screenshot_bgr()
+            h1, w1 = img1.shape[:2]
+            p3 = _tap_text_once(["搜索", "输入"], roi=(int(w1 * 0.30), 0, int(w1 * 0.92), int(h1 * 0.28)))
+            if p3 is None:
+                p3 = (int(w1 * 0.62), int(h1 * 0.11))
+                self.adb.tap(*p3)
+                time.sleep(self.step_sleep_s)
+
+        adb_ime = os.getenv("ANDROID_ADB_IME_ID", "com.android.adbkeyboard/.AdbIME").strip() or "com.android.adbkeyboard/.AdbIME"
+        sogou_ime = os.getenv("ANDROID_SOGOU_IME_ID", "com.sohu.inputmethod.sogou.xiaomi/.SogouIME").strip() or "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
+        self.adb.ime_set(adb_ime)
+        time.sleep(self.step_sleep_s)
+        self.adb.adbkeyboard_input_text(kw)
+        time.sleep(self.step_sleep_s)
+        self.adb.keyevent(66)
+        time.sleep(self.step_sleep_s)
+        self.adb.ime_set(sogou_ime)
+        time.sleep(self.step_sleep_s)
+
+        img = self.screenshot_bgr()
+        located = None
+        try:
+            located = vl_locator.locate_text_center(img, kw, roi=result_roi)
+        except Exception:
+            located = None
+        p4 = None
+        if located is not None:
+            x = int(located["x"])
+            y = int(located["y"])
+            self.adb.tap(x, y)
+            p4 = (x, y)
+            time.sleep(self.step_sleep_s)
+        else:
+            h, w = img.shape[:2]
+            x = int(w * 0.55)
+            y = int(h * 0.35)
+            self.adb.tap(x, y)
+            p4 = (x, y)
+            time.sleep(self.step_sleep_s)
+
+        go = self.try_tap_best([self.tpl_map_go, self.tpl_map_on_the_way], threshold=thr_go)
+        if go is None:
+            img2 = self.screenshot_bgr()
+            h2, w2 = img2.shape[:2]
+            roi_go = (int(w2 * 0.58), int(h2 * 0.18), w2, int(h2 * 0.92))
+            p5 = _tap_text_once(["前往", "在路上", "寻路"], roi=roi_go)
+            go = {"template": "vl_text", "tap": p5} if p5 is not None else None
+        return {"ok": True, "tap_map": p1, "tap_search": p2, "tap_input": p3, "tap_result": p4, "tap_go": go, "keyword": kw}
+
     def _ocr_text_from_roi_paddle(self, img_bgr: np.ndarray, roi: Tuple[int, int, int, int]) -> str:
         x1, y1, x2, y2 = roi
         pil_img = _bgr_to_pil(img_bgr)
@@ -258,9 +368,13 @@ class AndroidMhxyBot:
         s = str(text or "").strip()
         if not s:
             return None
-        nums = re.findall(r"\d+", s)
-        if len(nums) >= 2:
-            return int(nums[0]), int(nums[1])
+        m = re.search(r"(\d{1,3})\s*[,，]\s*(\d{1,3})", s)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        if "(" in s or "（" in s or ")" in s or "）" in s:
+            nums = re.findall(r"\d+", s)
+            if len(nums) >= 2:
+                return int(nums[0]), int(nums[1])
         return None
 
     def detect_coord_by_roi(self) -> Dict:
@@ -375,7 +489,10 @@ def main() -> None:
                     os.remove(fp)
             except Exception:
                 pass
-    shutil.rmtree(debug_dir)
+        try:
+            shutil.rmtree(debug_dir)
+        except Exception:
+            pass
     sys_util.load_dotenv()
 
     bot = AndroidMhxyBot()
