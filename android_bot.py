@@ -156,13 +156,13 @@ class AndroidMhxyBot:
             return None
         (top_left, _) = best
         cx, cy = _template_center_from_top_left(template_path, top_left, extra_offset=extra_offset)
+        self.adb.tap(cx, cy)
         try:
             dbg = img_bgr.copy()
             cv2.drawMarker(dbg, (int(cx), int(cy)), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=40, thickness=2)
             sys_util.save_debug_image(dbg, f"android_tap_{os.path.basename(template_path)}_{cx}_{cy}")
         except Exception:
             pass
-        self.adb.tap(cx, cy)
         time.sleep(self.step_sleep_s)
         return cx, cy
 
@@ -523,13 +523,18 @@ class AndroidMhxyBot:
         thr_receive_task = float(os.getenv("ANDROID_THR_BAOTU_RECEIVE_TASK", str(self.match_threshold)) or self.match_threshold)
         attempts = []
 
+        img_bgr0 = self.screenshot_bgr()
+        h0, w0 = img_bgr0.shape[:2]
+        self.adb.tap(int(w0 / 2), int(h0 / 2))
+        time.sleep(1.5)
+
         for i in range(1, max_retry + 1):
-            step = self.go_to_xiaoer()
+            step = self.click_xiaoer()
             img_bgr = self.screenshot_bgr()
             best_task = self._match_once(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
             if best_task is not None:
                 (top_left, conf) = best_task
-                p_task = self._tap_template(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
+                # p_task = self._tap_template(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
                 return {
                     "ok": True,
                     "attempt": i,
@@ -540,7 +545,13 @@ class AndroidMhxyBot:
 
         raise RuntimeError(f"领取宝图任务失败，重试超过{max_retry}次: {attempts}")
 
-    def go_to_xiaoer(self) -> Dict:
+    def click_xiaoer(self) -> Dict:
+        step_1 = self.go_to_xiaoer(tap_top_right=True)
+        time.sleep(1.5)
+        step_2 = self.go_to_xiaoer(tap_top_right=False)
+        return {"ok": bool(step_1.get("ok")) and bool(step_2.get("ok")), "step_1": step_1, "sleep_s": 0.5, "step_2": step_2}
+
+    def go_to_xiaoer(self, tap_top_right: bool = False) -> Dict:
         thr_expand = float(os.getenv("ANDROID_THR_SYSTEM_EXPAND", str(self.match_threshold)) or self.match_threshold)
         thr_xiaoer = float(os.getenv("ANDROID_THR_NPC_XIAOER", "0.4") or "0.4")
         thr_back = float(os.getenv("ANDROID_THR_SYSTEM_BACK", str(self.match_threshold)) or self.match_threshold)
@@ -550,13 +561,31 @@ class AndroidMhxyBot:
         img_bgr = self.screenshot_bgr()
         matched = self._match_first_of_templates(img_bgr, [self.tpl_npc_dianxiaoer_1, self.tpl_npc_dianxiaoer_2, self.tpl_npc_dianxiaoer_3], threshold=thr_xiaoer)
         if matched is None:
+            p_back = self._try_tap(self.tpl_system_back, threshold=thr_back)
             return {"ok": False, "reason": "npc_not_found", "tap_expand": p_expand}
 
         tpl = str(matched["template"])
         top_left = matched["top_left"]
         conf = float(matched["confidence"])
-        p_center = self._tap_matched_center(img_bgr, tpl, top_left)
-        p_back = self._tap(self.tpl_system_back, threshold=thr_back)
+        tap_center = None
+        tap_top_right_pt = None
+        if tap_top_right:
+            w, h = self._get_template_wh(tpl)
+            margin = max(5, int(min(w, h) * 0.15))
+            margin = min(margin, max(1, w - 1), max(1, h - 1))
+            x = int(top_left[0] + w - margin)
+            y = int(top_left[1] + margin)
+            try:
+                dbg = img_bgr.copy()
+                cv2.drawMarker(dbg, (int(x), int(y)), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=40, thickness=2)
+                sys_util.save_debug_image(dbg, f"android_tap_{os.path.basename(tpl)}_{x}_{y}")
+            except Exception:
+                pass
+            self.adb.tap(x+10, y+10)
+            tap_top_right_pt = (x, y)
+        else:
+            tap_center = self._tap_matched_center(img_bgr, tpl, top_left)
+        p_back = self._try_tap(self.tpl_system_back, threshold=thr_back)
         time.sleep(self.step_sleep_s)
 
         return {
@@ -565,7 +594,9 @@ class AndroidMhxyBot:
             "template": tpl,
             "confidence": conf,
             "top_left": top_left,
-            "tap_center": p_center,
+            "tap_pos": "top_right" if tap_top_right else "center",
+            "tap_center": tap_center,
+            "tap_top_right": tap_top_right_pt,
             "tap_back": p_back,
         }
 
@@ -654,8 +685,8 @@ def main() -> None:
 
     bot = AndroidMhxyBot()
     # bot.cleanup_desktop()
-    # result = bot.fly_to_hotel()
-    # result = bot.enter_hotel()
+    # bot.fly_to_hotel()
+    # bot.enter_hotel()
     result = bot.recieve_baotu_task()
 
     for k, v in result.items():
