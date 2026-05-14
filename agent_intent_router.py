@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Union
 
+import sys_util
+
 
 ImageInput = Union[str, bytes, bytearray, memoryview, Any]
 
@@ -127,12 +129,8 @@ def route_image_intent(image: ImageInput) -> Dict[str, Any]:
 
 
 def main() -> None:
-    import argparse
-
-    ap = argparse.ArgumentParser()
-    ap.add_argument("image", type=str)
-    args = ap.parse_args()
-    out = route_image_intent(args.image)
+    sys_util.load_dotenv()
+    out = route_image_intent("screen.png")
     for k, v in out.items():
         print(f"{k}: {v}")
 

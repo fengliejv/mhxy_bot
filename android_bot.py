@@ -534,7 +534,7 @@ class AndroidMhxyBot:
             best_task = self._match_once(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
             if best_task is not None:
                 (top_left, conf) = best_task
-                # p_task = self._tap_template(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
+                p_task = self._tap_template(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
                 return {
                     "ok": True,
                     "attempt": i,
