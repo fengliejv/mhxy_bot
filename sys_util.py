@@ -5,7 +5,10 @@ import atexit
 import queue
 import threading
 import time
-from PIL import Image
+try:
+    from PIL import Image as _PIL_Image
+except Exception:
+    _PIL_Image = None
 
 _debug_queue: "queue.Queue[tuple]" = queue.Queue(maxsize=256)
 _debug_worker_started = False
@@ -54,14 +57,16 @@ def _write_debug_image(img, debug_path: str) -> None:
         img.save(debug_path)
         print(f"[DEBUG] 捕获文件已保存: {debug_path}")
         return
+    if _PIL_Image is None:
+        return
     try:
         shape = getattr(img, "shape", None)
         if shape is not None and len(shape) == 3 and shape[2] == 3:
-            pil_img = Image.fromarray(img[:, :, ::-1])
+            pil_img = _PIL_Image.fromarray(img[:, :, ::-1])
         elif shape is not None and len(shape) == 3 and shape[2] == 4:
-            pil_img = Image.fromarray(img[:, :, [2, 1, 0, 3]])
+            pil_img = _PIL_Image.fromarray(img[:, :, [2, 1, 0, 3]])
         else:
-            pil_img = Image.fromarray(img)
+            pil_img = _PIL_Image.fromarray(img)
         pil_img.save(debug_path)
         print(f"[DEBUG] 捕获文件已保存: {debug_path}")
     except Exception:
@@ -117,3 +122,18 @@ def save_debug_image(img, name: str) -> None:
             _debug_queue.put_nowait((img, debug_path))
         except Exception:
             return
+import shutil
+def clear_debug_capture() -> None:
+    debug_dir = "debug_capture"
+    if os.path.isdir(debug_dir):
+        for f in os.listdir(debug_dir):
+            fp = os.path.join(debug_dir, f)
+            try:
+                if os.path.isfile(fp):
+                    os.remove(fp)
+            except Exception:
+                pass
+        try:
+            shutil.rmtree(debug_dir)
+        except Exception:
+            pass

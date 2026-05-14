@@ -38,17 +38,12 @@ def _to_png_bytes(image: ImageInput) -> bytes:
         return buf.tobytes()
     return bytes(image)
 
-
 def _qwen_classify_and_extract(image: ImageInput) -> Dict[str, Any]:
     png = _to_png_bytes(image)
-    if os.getenv("DEBUG", "").strip().lower() in ("1", "true", "yes"):
-        os.makedirs("debug_capture", exist_ok=True)
-        with open(os.path.join("debug_capture", "agent_intent_input.png"), "wb") as f:
-            f.write(png)
-    try:
-        import siliflow_client
-    except Exception as e:
-        raise RuntimeError("缺少 siliflow_client 或其依赖（numpy/opencv/pillow 等）") from e
+    # if os.getenv("DEBUG", "").strip().lower() in ("1", "true", "yes"):
+    #     os.makedirs("debug_capture", exist_ok=True)
+    #     with open(os.path.join("debug_capture", "agent_intent_input.png"), "wb") as f:
+    #         f.write(png)
     schema = {
         "type": "object",
         "properties": {
@@ -80,9 +75,14 @@ def _qwen_classify_and_extract(image: ImageInput) -> Dict[str, Any]:
         "输出 JSON。\n"
         "若 category=mhxy_baotu：提取 qiangdao_name(强盗/怪物名称) 与 location(地点/地图/坐标/场景)。\n"
         "若 category=word_puzzle：提取 answer_phrase(四字词语) 与 answer_indices(长度为4的整数数组，1-based，表示点击顺序对应下方字块的位置)。\n"
-        "若无法确定字段则返回空字符串或 [ ] 并尽量给出你最可信的结果。"
+        "若无法确定字段则返回空字符串或 [ ] 并尽量给出你最可信的结果。\n"
     )
+    try:
+        import siliflow_client
+    except Exception as e:
+        raise RuntimeError("缺少 siliflow_client 或其依赖（numpy/opencv/pillow 等）") from e
     resp = siliflow_client.siliconflow_qwen_structured(png, prompt=prompt, schema=schema)
+    print(f"qwen_classify_and_extract: {resp}")
     parsed = resp.get("parsed")
     if isinstance(parsed, dict):
         parsed["_raw"] = resp
@@ -90,12 +90,7 @@ def _qwen_classify_and_extract(image: ImageInput) -> Dict[str, Any]:
     return {"category": "other", "baotu": None, "word_puzzle": None, "_raw": resp}
 
 
-def baotu_task_stub(qiangdao_name: str, location: str) -> Dict[str, Any]:
-    return {"ok": False, "reason": "not_implemented", "qiangdao_name": qiangdao_name, "location": location}
-
-
-def solve_word_puzzle_stub(answer_indices: Sequence[int]) -> Dict[str, Any]:
-    return {"ok": True, "answer_indices": [int(x) for x in answer_indices]}
+from agent_actions import baotu_task_stub, solve_word_puzzle_stub
 
 
 def route_image_intent(image: ImageInput) -> Dict[str, Any]:
@@ -106,9 +101,9 @@ def route_image_intent(image: ImageInput) -> Dict[str, Any]:
         b = r.get("baotu") or {}
         qiangdao_name = str(b.get("qiangdao_name", "") or "").strip()
         location = str(b.get("location", "") or "").strip()
-        params = BaotuParams(qiangdao_name=qiangdao_name, location=location)
-        called = baotu_task_stub(params.qiangdao_name, params.location)
-        return {"category": "mhxy_baotu", "params": params.__dict__, "called": called, "raw": r.get("_raw")}
+        # params = BaotuParams(qiangdao_name=qiangdao_name, location=location)
+        # called = baotu_task_stub(params.qiangdao_name, params.location)
+        return {"category": "mhxy_baotu", "params": params.__dict__}
 
     if cat in ("word_puzzle", "puzzle", "idiom"):
         w = r.get("word_puzzle") or {}
@@ -131,8 +126,8 @@ def route_image_intent(image: ImageInput) -> Dict[str, Any]:
 def main() -> None:
     sys_util.load_dotenv()
     out = route_image_intent("screen.png")
-    for k, v in out.items():
-        print(f"{k}: {v}")
+    # for k, v in out.items():
+    #     print(f"{k}: {v}")
 
 
 if __name__ == "__main__":
