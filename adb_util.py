@@ -1,4 +1,3 @@
-import os
 import subprocess
 from typing import Optional, Sequence
 
@@ -7,6 +6,7 @@ import numpy as np
 from PIL import Image
 import io
 
+import botconfig
 import sys_util
 
 
@@ -25,9 +25,10 @@ def _adb_escape_text(text: str) -> str:
 
 class AdbClient:
     def __init__(self, serial: Optional[str] = None, adb_path: Optional[str] = None) -> None:
-        env_serial = os.getenv("ADB_SERIAL", "").strip() or None
-        self.serial = serial or env_serial or self._auto_pick_serial(adb_path or os.getenv("ADB_PATH", "").strip() or "adb")
-        self.adb_path = adb_path or os.getenv("ADB_PATH", "").strip() or "adb"
+        env_serial = botconfig.env_optional_str("ADB_SERIAL")
+        resolved_adb_path = adb_path or botconfig.env_str("ADB_PATH", "adb") or "adb"
+        self.serial = serial or env_serial or self._auto_pick_serial(resolved_adb_path)
+        self.adb_path = resolved_adb_path
 
     def _auto_pick_serial(self, adb_path: str) -> Optional[str]:
         try:

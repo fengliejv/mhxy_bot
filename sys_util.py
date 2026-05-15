@@ -92,25 +92,15 @@ def _debug_worker_loop() -> None:
 
 
 def load_dotenv(path: str = ".env") -> None:
-    if not os.path.exists(path):
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key and key not in os.environ:
-                    os.environ[key] = value
-    except OSError:
-        return
+    import botconfig
+
+    botconfig.init(path)
 
 
 def save_debug_image(img, name: str) -> None:
-        is_debug = os.getenv("DEBUG", "").strip().lower() in ("1", "true", "yes")
+        import botconfig
+
+        is_debug = bool(botconfig.is_debug())
         if not is_debug:
             return
         debug_dir = os.path.join(os.getcwd(), "debug_capture")

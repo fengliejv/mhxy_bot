@@ -1,10 +1,10 @@
-import os
 import io
 import desk_util
 import siliflow_client
 import datetime
 from PIL import Image
 import sys_util
+import botconfig
 def _parse_roi(roi_text: str):
     parts = [x.strip() for x in roi_text.split(",")]
     if len(parts) != 4:
@@ -30,7 +30,7 @@ def detect_current_map_by_roi(
             "window_hwnd": int
         }
     """
-    roi_text = os.getenv("MHXY_MAP_ROI", "").strip()
+    roi_text = botconfig.env_str("MHXY_MAP_ROI", "")
     if not roi_text:
         raise RuntimeError("缺少 MHXY_MAP_ROI，请在 .env 配置，例如 0,0,120,120")
     x1, y1, x2, y2 = _parse_roi(roi_text)

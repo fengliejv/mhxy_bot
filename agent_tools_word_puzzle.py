@@ -1,7 +1,6 @@
-import os
 from typing import Any, Dict, Optional, Sequence, Tuple
 
-import sys_util
+import botconfig
 
 
 def _parse_xy(text: str) -> Optional[Tuple[int, int]]:
@@ -35,15 +34,11 @@ def _parse_xy(text: str) -> Optional[Tuple[int, int]]:
 
 
 def _get_env_first(keys: Sequence[str]) -> str:
-    for k in keys:
-        v = os.getenv(str(k), "").strip()
-        if v:
-            return v
-    return ""
+    return botconfig.env_str_first(keys, default="")
 
 
 def load_word_puzzle_points_from_env() -> Dict[int, Tuple[int, int]]:
-    sys_util.load_dotenv()
+    botconfig.init()
     pts: Dict[int, Tuple[int, int]] = {}
     for i in (1, 2, 3, 4):
         v = _get_env_first(
@@ -80,7 +75,7 @@ def click_word_puzzle_by_indices(answer_indices: Sequence[int], sleep_s: Optiona
         raise RuntimeError("缺少 adb_util 或其依赖，无法执行点击") from e
 
     if sleep_s is None:
-        sleep_s = float(os.getenv("ANDROID_STEP_SLEEP_S", "0.25").strip() or "0.25")
+        sleep_s = botconfig.env_float("ANDROID_STEP_SLEEP_S", 0.25)
 
     adb = AdbClient()
     taps = []

@@ -6,6 +6,7 @@ import datetime
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+import botconfig
 
 def has_attachments(docx_path):
     try:
@@ -93,7 +94,7 @@ def mineru_parse_keep_artifacts(
     if not src.is_file():
         raise FileNotFoundError(str(src))
 
-    cmd = (mineru_cmd or os.getenv("MINERU_CMD", "").strip() or "mineru").strip()
+    cmd = (mineru_cmd or botconfig.env_str("MINERU_CMD", "") or "mineru").strip()
     if not cmd:
         cmd = "mineru"
     if shutil.which(cmd) is None:
@@ -119,7 +120,7 @@ def mineru_parse_keep_artifacts(
     if extra_args:
         argv += [str(x) for x in extra_args if str(x).strip()]
 
-    run_env = os.environ.copy()
+    run_env = botconfig.environ_copy()
     if env:
         for k, v in env.items():
             kk = str(k).strip()
