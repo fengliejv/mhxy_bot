@@ -5,15 +5,15 @@ import datetime
 from PIL import Image
 import sys_util
 import botconfig
-def _parse_roi(roi_text: str):
+def _parse_roi(roi_text: str, label: str):
     parts = [x.strip() for x in roi_text.split(",")]
     if len(parts) != 4:
-        raise RuntimeError("MHXY_MAP_ROI 格式错误，期望 x1,y1,x2,y2")
+        raise RuntimeError(f"{label} 格式错误，期望 x1,y1,x2,y2")
     x1, y1, x2, y2 = [int(v) for v in parts]
     if x1 < 0 or y1 < 0:
-        raise RuntimeError("MHXY_MAP_ROI 数值无效，要求 x1>=0,y1>=0")
+        raise RuntimeError(f"{label} 数值无效，要求 x1>=0,y1>=0")
     if x2 <= x1 or y2 <= y1:
-        raise RuntimeError("MHXY_MAP_ROI 数值无效，要求 x2>x1,y2>y1")
+        raise RuntimeError(f"{label} 数值无效，要求 x2>x1,y2>y1")
     return x1, y1, x2, y2
 
 def detect_current_map_by_roi(
@@ -30,10 +30,10 @@ def detect_current_map_by_roi(
             "window_hwnd": int
         }
     """
-    roi_text = botconfig.env_str("MHXY_MAP_ROI", botconfig.MHXY_MAP_ROI)
+    roi_text = botconfig.MHXY_MAP_ROI
     if not roi_text:
-        raise RuntimeError("缺少 MHXY_MAP_ROI，请在 .env 配置，例如 0,0,120,120")
-    x1, y1, x2, y2 = _parse_roi(roi_text)
+        raise RuntimeError(f"缺少 {botconfig.KEY_MHXY_MAP_ROI}，请在 .env 配置，例如 0,0,120,120")
+    x1, y1, x2, y2 = _parse_roi(roi_text, botconfig.KEY_MHXY_MAP_ROI)
 
     img_bgr = desk_util.capture_mhxy_client_image(hwnd)
     sys_util.save_debug_image(img_bgr, "map_roi")
@@ -67,6 +67,5 @@ def detect_current_map_by_roi(
         "map_name": map_name,
         "raw_ocr": ocr_result,
     }
-
 
 

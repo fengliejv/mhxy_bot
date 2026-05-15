@@ -94,7 +94,7 @@ def mineru_parse_keep_artifacts(
     if not src.is_file():
         raise FileNotFoundError(str(src))
 
-    cmd = (mineru_cmd or botconfig.env_str("MINERU_CMD", botconfig.MINERU_CMD) or "mineru").strip()
+    cmd = (mineru_cmd or botconfig.MINERU_CMD or "mineru").strip()
     if not cmd:
         cmd = "mineru"
     if shutil.which(cmd) is None:
@@ -211,6 +211,6 @@ def getMineruOutputDir():
 
 
 if __name__ == "__main__":
-    # crop_pdf_pages("3.第三册桥梁涵洞第1合同.pdf", 20, 36)
+    crop_pdf_pages("3.第三册桥梁涵洞第1合同.pdf", 82, 83)
     # res = mineru_parse_keep_artifacts("3.第三册桥梁涵洞第1合同_p20-36.pdf")
-    getMineruOutputDir()
+    # getMineruOutputDir()

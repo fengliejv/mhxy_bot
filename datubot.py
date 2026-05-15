@@ -1,90 +1,21 @@
-import re
 import time
 from typing import Any, Dict, Optional, Tuple
-from agent_service import extract_baotu_info
-
-import cv2
-import numpy as np
+from agent_service import extract_baotu_info, route_image_intent
 
 import botconfig
 import siliflow_client
 import sys_util
 from datubot_strategies import select_map_strategy
-from vision_bot import AndroidVisionBot
-
-
-def _parse_roi(roi_text: str, env_name: str) -> Tuple[int, int, int, int]:
-    parts = [x.strip() for x in str(roi_text or "").split(",")]
-    if len(parts) != 4:
-        raise RuntimeError(f"{env_name} 格式错误，期望 x1,y1,x2,y2")
-    x1, y1, x2, y2 = [int(v) for v in parts]
-    if x1 < 0 or y1 < 0:
-        raise RuntimeError(f"{env_name} 数值无效，要求 x1>=0,y1>=0")
-    if x2 <= x1 or y2 <= y1:
-        raise RuntimeError(f"{env_name} 数值无效，要求 x2>x1,y2>y1")
-    return x1, y1, x2, y2
-
-
-def _crop_png_bytes(img_bgr: np.ndarray, roi: Tuple[int, int, int, int]) -> bytes:
-    x1, y1, x2, y2 = roi
-    cropped = img_bgr[y1:y2, x1:x2]
-    ok, buf = cv2.imencode(".png", cropped)
-    if not ok:
-        raise RuntimeError("PNG 编码失败")
-    return bytes(buf)
-
-
-def _extract_coord(text: str) -> Optional[Tuple[int, int]]:
-    s = str(text or "").strip()
-    if not s:
-        return None
-    m = re.search(r"(\d{1,3})\s*[,，]\s*(\d{1,3})", s)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    if "(" in s or "（" in s or ")" in s or "）" in s:
-        nums = re.findall(r"\d+", s)
-        if len(nums) >= 2:
-            return int(nums[0]), int(nums[1])
-    return None
+from image_matcher import match_template
+from vision_bot import AndroidVisionBot, _crop_png_bytes, _extract_coord, _parse_roi, wait_until_arrived_by_coord
 
 
 class Datubot(AndroidVisionBot):
 
-    def __init__(self, adb=None) -> None:
-        super().__init__(adb=adb)
-        self.map_roi_text = botconfig.env_str("MHXY_MAP_ROI", botconfig.MHXY_MAP_ROI)
-        self.coord_roi_text = botconfig.env_str("ANDROID_COORD_ROI", botconfig.ANDROID_COORD_ROI)
-
-        self.tpl_map_button = botconfig.env_str("ANDROID_TPL_MAP_BUTTON", botconfig.ANDROID_TPL_MAP_BUTTON)
-        self.tpl_map_button_2 = botconfig.env_str("ANDROID_TPL_MAP_BUTTON_2", botconfig.ANDROID_TPL_MAP_BUTTON_2)
-        self.tpl_map_search_icon = botconfig.env_str("ANDROID_TPL_MAP_SEARCH_ICON", botconfig.ANDROID_TPL_MAP_SEARCH_ICON)
-        self.tpl_map_input_icon = botconfig.env_str("ANDROID_TPL_MAP_INPUT_ICON", botconfig.ANDROID_TPL_MAP_INPUT_ICON)
-        self.tpl_map_go = botconfig.env_str("ANDROID_TPL_MAP_GO", botconfig.ANDROID_TPL_MAP_GO)
-        self.tpl_map_exit = botconfig.env_str("ANDROID_TPL_MAP_EXIT", botconfig.ANDROID_TPL_MAP_EXIT)
-        self.tpl_map_dianxiaoer = botconfig.env_str("ANDROID_TPL_MAP_DIANXIAOER", botconfig.ANDROID_TPL_MAP_DIANXIAOER)
-        self.tpl_map_on_the_way = botconfig.env_str("ANDROID_TPL_MAP_ON_THE_WAY", botconfig.ANDROID_TPL_MAP_ON_THE_WAY)
-        self.tpl_menu_daoju = botconfig.env_str("ANDROID_TPL_MENU_DAOJU", botconfig.ANDROID_TPL_MENU_DAOJU)
-        self.tpl_prop_changan_flag = botconfig.env_str("ANDROID_TPL_PROP_CHANGAN_FLAG", botconfig.ANDROID_TPL_PROP_CHANGAN_FLAG)
-        self.tpl_prop_use = botconfig.env_str("ANDROID_TPL_PROP_USE", botconfig.ANDROID_TPL_PROP_USE)
-        self.tpl_map_teleport_point = botconfig.env_str("ANDROID_TPL_MAP_TELEPORT_POINT", botconfig.ANDROID_TPL_MAP_TELEPORT_POINT)
-        self.tpl_baotu_receive_task = botconfig.env_str("ANDROID_TPL_BAOTU_RECEIVE_TASK", botconfig.ANDROID_TPL_BAOTU_RECEIVE_TASK)
-        self.tpl_changan_hotel_door = botconfig.env_str("ANDROID_TPL_CHANGAN_HOTEL_DOOR", botconfig.ANDROID_TPL_CHANGAN_HOTEL_DOOR)
-        self.tpl_system_close_guide = botconfig.env_str("ANDROID_TPL_SYSTEM_CLOSE_GUIDE", botconfig.ANDROID_TPL_SYSTEM_CLOSE_GUIDE)
-        self.tpl_system_close_task = botconfig.env_str("ANDROID_TPL_SYSTEM_CLOSE_TASK", botconfig.ANDROID_TPL_SYSTEM_CLOSE_TASK)
-        self.tpl_system_hide_dialog = botconfig.env_str("ANDROID_TPL_SYSTEM_HIDE_DIALOG", botconfig.ANDROID_TPL_SYSTEM_HIDE_DIALOG)
-        self.tpl_system_auto_attack_shrink = botconfig.env_str("ANDROID_TPL_SYSTEM_AUTO_ATTACK_SHRINK", botconfig.ANDROID_TPL_SYSTEM_AUTO_ATTACK_SHRINK)
-        self.tpl_system_expand = botconfig.env_str("ANDROID_TPL_SYSTEM_EXPAND", botconfig.ANDROID_TPL_SYSTEM_EXPAND)
-        self.tpl_system_hide_ui_disable = botconfig.env_str("ANDROID_TPL_SYSTEM_HIDE_UI_DISABLE", botconfig.ANDROID_TPL_SYSTEM_HIDE_UI_DISABLE)
-        self.tpl_system_hide_player_disable = botconfig.env_str("ANDROID_TPL_SYSTEM_HIDE_PLAYER_DISABLE", botconfig.ANDROID_TPL_SYSTEM_HIDE_PLAYER_DISABLE)
-        self.tpl_system_back = botconfig.env_str("ANDROID_TPL_SYSTEM_BACK", botconfig.ANDROID_TPL_SYSTEM_BACK)
-        self.tpl_npc_dianxiaoer_1 = botconfig.env_str("ANDROID_TPL_NPC_DIANXIAOER_1", botconfig.ANDROID_TPL_NPC_DIANXIAOER_1)
-        self.tpl_npc_dianxiaoer_2 = botconfig.env_str("ANDROID_TPL_NPC_DIANXIAOER_2", botconfig.ANDROID_TPL_NPC_DIANXIAOER_2)
-        self.tpl_npc_dianxiaoer_3 = botconfig.env_str("ANDROID_TPL_NPC_DIANXIAOER_3", botconfig.ANDROID_TPL_NPC_DIANXIAOER_3)
-
     def detect_current_map(self) -> Dict:
-        if not self.map_roi_text:
-            raise RuntimeError("缺少 MHXY_MAP_ROI，请在 .env 配置，例如 0,0,120,120")
-        roi = _parse_roi(self.map_roi_text, "MHXY_MAP_ROI")
+        if not botconfig.MHXY_MAP_ROI:
+            raise RuntimeError(f"缺少 {botconfig.KEY_MHXY_MAP_ROI}，请在 .env 配置，例如 0,0,120,120")
+        roi = _parse_roi(botconfig.MHXY_MAP_ROI, botconfig.KEY_MHXY_MAP_ROI)
         img_bgr = self.screenshot_bgr()
         png_bytes = _crop_png_bytes(img_bgr, roi)
         sys_util.save_debug_image(img_bgr[roi[1]:roi[3], roi[0]:roi[2]], "android_map_roi_cropped")
@@ -93,25 +24,32 @@ class Datubot(AndroidVisionBot):
         return {"map_name": map_name, "raw_ocr": ocr_result, "roi": list(roi)}
 
     def cleanup_desktop(self) -> Dict:
-        thr_close_guide = botconfig.env_float("ANDROID_THR_SYSTEM_CLOSE_GUIDE", botconfig.ANDROID_THR_SYSTEM_CLOSE_GUIDE)
-        thr_close_task = botconfig.env_float("ANDROID_THR_SYSTEM_CLOSE_TASK", botconfig.ANDROID_THR_SYSTEM_CLOSE_TASK)
-        thr_hide_dialog = botconfig.env_float("ANDROID_THR_SYSTEM_HIDE_DIALOG", botconfig.ANDROID_THR_SYSTEM_HIDE_DIALOG)
-        thr_auto_attack_shrink = botconfig.env_float("ANDROID_THR_SYSTEM_AUTO_ATTACK_SHRINK", botconfig.ANDROID_THR_SYSTEM_AUTO_ATTACK_SHRINK)
-        thr_expand = botconfig.env_float("ANDROID_THR_SYSTEM_EXPAND", botconfig.ANDROID_THR_SYSTEM_EXPAND)
-        thr_hide_ui_disable = botconfig.env_float("ANDROID_THR_SYSTEM_HIDE_UI_DISABLE", botconfig.ANDROID_THR_SYSTEM_HIDE_UI_DISABLE)
-        thr_hide_player_disable = botconfig.env_float("ANDROID_THR_SYSTEM_HIDE_PLAYER_DISABLE", botconfig.ANDROID_THR_SYSTEM_HIDE_PLAYER_DISABLE)
-        thr_back = botconfig.env_float("ANDROID_THR_SYSTEM_BACK", botconfig.ANDROID_THR_SYSTEM_BACK)
+        p_close_guide = self._try_tap(botconfig.ANDROID_TPL_SYSTEM_CLOSE_GUIDE, threshold=botconfig.ANDROID_THR_SYSTEM_CLOSE_GUIDE)
+        p_close_task = self._try_tap(botconfig.ANDROID_TPL_SYSTEM_CLOSE_TASK, threshold=botconfig.ANDROID_THR_SYSTEM_CLOSE_TASK)
+        p_hide_dialog = self._try_tap(botconfig.ANDROID_TPL_SYSTEM_HIDE_DIALOG, threshold=botconfig.ANDROID_THR_SYSTEM_HIDE_DIALOG)
+        p_auto_attack_shrink = self._try_tap(
+            botconfig.ANDROID_TPL_SYSTEM_AUTO_ATTACK_SHRINK, threshold=botconfig.ANDROID_THR_SYSTEM_AUTO_ATTACK_SHRINK
+        )
 
-        p_close_guide = self._try_tap(self.tpl_system_close_guide, threshold=thr_close_guide)
-        p_close_task = self._try_tap(self.tpl_system_close_task, threshold=thr_close_task)
-        p_hide_dialog = self._try_tap(self.tpl_system_hide_dialog, threshold=thr_hide_dialog)
-        p_auto_attack_shrink = self._try_tap(self.tpl_system_auto_attack_shrink, threshold=thr_auto_attack_shrink)
+        p_expand = self._try_tap(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
+        p_hide_ui_disable = (
+            self._try_tap(botconfig.ANDROID_TPL_SYSTEM_HIDE_UI_DISABLE, threshold=botconfig.ANDROID_THR_SYSTEM_HIDE_UI_DISABLE)
+            if p_expand is not None
+            else None
+        )
+        p_hide_player_disable = (
+            self._try_tap(
+                botconfig.ANDROID_TPL_SYSTEM_HIDE_PLAYER_DISABLE, threshold=botconfig.ANDROID_THR_SYSTEM_HIDE_PLAYER_DISABLE
+            )
+            if p_expand is not None
+            else None
+        )
 
-        p_expand = self._try_tap(self.tpl_system_expand, threshold=thr_expand)
-        p_hide_ui_disable = self._try_tap(self.tpl_system_hide_ui_disable, threshold=thr_hide_ui_disable) if p_expand is not None else None
-        p_hide_player_disable = self._try_tap(self.tpl_system_hide_player_disable, threshold=thr_hide_player_disable) if p_expand is not None else None
-
-        p_back = self._try_tap(self.tpl_system_back, threshold=thr_back) if p_expand is not None else None
+        p_back = (
+            self._try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
+            if p_expand is not None
+            else None
+        )
 
         return {
             "tap_close_guide": p_close_guide,
@@ -124,15 +62,7 @@ class Datubot(AndroidVisionBot):
             "tap_back": p_back,
         }
 
-    def _tap_screen_center(self, sleep_after: float = 0.0) -> Tuple[int, int]:
-        img_bgr = self.screenshot_bgr()
-        h, w = img_bgr.shape[:2]
-        x = int(w / 2)
-        y = int(h / 2)
-        self.adb.tap(x, y)
-        if float(sleep_after) > 0:
-            time.sleep(float(sleep_after))
-        return x, y
+
 
     def _capture_and_extract_baotu_llm(self) -> Dict[str, Any]:
         img_bgr = self.screenshot_bgr()
@@ -160,7 +90,9 @@ class Datubot(AndroidVisionBot):
 
     def tap_map_button(self, threshold: float = 0.6) -> Tuple[int, int]:
         img_bgr = self.screenshot_bgr()
-        matched = self._match_best_of_templates(img_bgr, [self.tpl_map_button, self.tpl_map_button_2], threshold=threshold)
+        matched = self._match_best_of_templates(
+            img_bgr, [botconfig.ANDROID_TPL_MAP_BUTTON, botconfig.ANDROID_TPL_MAP_BUTTON_2], threshold=threshold
+        )
         if matched is None:
             raise RuntimeError("地图按钮模板匹配失败")
         return self._tap_matched_center(img_bgr, str(matched["template"]), matched["top_left"])
@@ -170,7 +102,7 @@ class Datubot(AndroidVisionBot):
         img_bgr = self.screenshot_bgr()
         matched = self._match_best_of_templates(
             img_bgr,
-            [self.tpl_npc_dianxiaoer_1, self.tpl_npc_dianxiaoer_2, self.tpl_npc_dianxiaoer_3],
+            [botconfig.ANDROID_TPL_NPC_DIANXIAOER_1, botconfig.ANDROID_TPL_NPC_DIANXIAOER_2, botconfig.ANDROID_TPL_NPC_DIANXIAOER_3],
             threshold=0.5,
         )
         if matched is None:
@@ -190,7 +122,7 @@ class Datubot(AndroidVisionBot):
         self.adb.tap(x_edge, y_edge)
         time.sleep(2.0)
         self.adb.tap(x_center, y_center)
-        time.sleep(self.step_sleep_s)
+        time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
         return {
             "ok": True,
             "cleanup": cleanup,
@@ -200,7 +132,7 @@ class Datubot(AndroidVisionBot):
             "tap_center": (x_center, y_center),
         }
 
-    def _ocr_text_from_roi_paddle(self, img_bgr: np.ndarray, roi: Tuple[int, int, int, int], debug_name: str) -> str:
+    def _ocr_text_from_roi_paddle(self, img_bgr, roi: Tuple[int, int, int, int], debug_name: str) -> str:
         png_bytes = _crop_png_bytes(img_bgr, roi)
         sys_util.save_debug_image(img_bgr[roi[1]:roi[3], roi[0]:roi[2]], debug_name)
         ocr_result = siliflow_client.siliconflow_paddleocr(png_bytes)
@@ -210,55 +142,29 @@ class Datubot(AndroidVisionBot):
         return _extract_coord(text)
 
     def detect_coord_by_roi(self) -> Dict:
-        if not self.coord_roi_text:
-            raise RuntimeError("缺少 ANDROID_COORD_ROI")
-        roi = _parse_roi(self.coord_roi_text, "ANDROID_COORD_ROI")
+        if not botconfig.ANDROID_COORD_ROI:
+            raise RuntimeError(f"缺少 {botconfig.KEY_ANDROID_COORD_ROI}")
+        roi = _parse_roi(botconfig.ANDROID_COORD_ROI, botconfig.KEY_ANDROID_COORD_ROI)
         img_bgr = self.screenshot_bgr()
         text = self._ocr_text_from_roi_paddle(img_bgr, roi, debug_name="android_coord_roi_cropped")
         coord = self._parse_coord_text(text)
         return {"coord": coord, "raw_text": text, "engine": "paddle", "roi": list(roi)}
 
-    def wait_until_arrived_by_coord(self) -> Dict:
-        max_wait_s = botconfig.env_float("ANDROID_ARRIVAL_MAX_WAIT_S", botconfig.ANDROID_ARRIVAL_MAX_WAIT_S)
-        interval_s = botconfig.env_float("ANDROID_ARRIVAL_CHECK_INTERVAL_S", botconfig.ANDROID_ARRIVAL_CHECK_INTERVAL_S)
-        stable_need = botconfig.env_int("ANDROID_ARRIVAL_STABLE_COUNT", botconfig.ANDROID_ARRIVAL_STABLE_COUNT)
-        deadline = time.time() + max(1.0, max_wait_s)
-        stable = 0
-        last = None
-        samples = 0
-
-        while time.time() < deadline:
-            r = self.detect_coord_by_roi()
-            samples += 1
-            coord = r.get("coord")
-            if coord is not None and coord == last:
-                stable += 1
-            else:
-                stable = 1 if coord is not None else 0
-                last = coord
-            if stable >= stable_need and last is not None:
-                return {"arrived": True, "coord": last, "samples": samples}
-            time.sleep(max(0.1, interval_s))
-
-        return {"arrived": False, "coord": last, "samples": samples}
-
     def fly_to_hotel(self) -> Dict:
-        from image_matcher import match_template
+        p_menu_daoju = self._tap(botconfig.ANDROID_TPL_MENU_DAOJU, threshold=botconfig.ANDROID_THR_MENU_DAOJU)
+        p_changan_flag = self._tap(botconfig.ANDROID_TPL_PROP_CHANGAN_FLAG, threshold=botconfig.ANDROID_THR_PROP_CHANGAN_FLAG)
+        p_use = self._tap(botconfig.ANDROID_TPL_PROP_USE, threshold=botconfig.ANDROID_THR_PROP_USE)
 
-        thr_menu_daoju = botconfig.env_float("ANDROID_THR_MENU_DAOJU", botconfig.ANDROID_THR_MENU_DAOJU)
-        thr_prop_changan_flag = botconfig.env_float("ANDROID_THR_PROP_CHANGAN_FLAG", botconfig.ANDROID_THR_PROP_CHANGAN_FLAG)
-        thr_prop_use = botconfig.env_float("ANDROID_THR_PROP_USE", botconfig.ANDROID_THR_PROP_USE)
-        thr_teleport_point = botconfig.env_float("ANDROID_THR_MAP_TELEPORT_POINT", botconfig.ANDROID_THR_MAP_TELEPORT_POINT)
-
-        p_menu_daoju = self._tap(self.tpl_menu_daoju, threshold=thr_menu_daoju)
-        p_changan_flag = self._tap(self.tpl_prop_changan_flag, threshold=thr_prop_changan_flag)
-        p_use = self._tap(self.tpl_prop_use, threshold=thr_prop_use)
-
-        target_x = botconfig.env_int("ANDROID_TELEPORT_TARGET_X", botconfig.ANDROID_TELEPORT_TARGET_X)
-        target_y = botconfig.env_int("ANDROID_TELEPORT_TARGET_Y", botconfig.ANDROID_TELEPORT_TARGET_Y)
+        target_x = botconfig.ANDROID_TELEPORT_TARGET_X
+        target_y = botconfig.ANDROID_TELEPORT_TARGET_Y
 
         img_bgr = self.screenshot_bgr()
-        ok, _, locations = match_template(img_bgr, self.tpl_map_teleport_point, threshold=thr_teleport_point, find_all=True)
+        ok, _, locations = match_template(
+            img_bgr,
+            botconfig.ANDROID_TPL_MAP_TELEPORT_POINT,
+            threshold=botconfig.ANDROID_THR_MAP_TELEPORT_POINT,
+            find_all=True,
+        )
         if not ok or not locations:
             return {
                 "ok": False,
@@ -268,7 +174,7 @@ class Datubot(AndroidVisionBot):
                 "tap_use": p_use,
             }
 
-        tpl_w, tpl_h = self._get_template_wh(self.tpl_map_teleport_point)
+        tpl_w, tpl_h = self._get_template_wh(botconfig.ANDROID_TPL_MAP_TELEPORT_POINT)
         best = None
         for (top_left, conf) in locations:
             cx = int(top_left[0] + tpl_w / 2)
@@ -280,8 +186,8 @@ class Datubot(AndroidVisionBot):
             if best is None or item["dist2"] < best["dist2"]:
                 best = item
 
-        tap_teleport = self._tap_matched_center(img_bgr, self.tpl_map_teleport_point, best["top_left"])
-        time.sleep(self.step_sleep_s)
+        tap_teleport = self._tap_matched_center(img_bgr, botconfig.ANDROID_TPL_MAP_TELEPORT_POINT, best["top_left"])
+        time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
 
         return {
             "ok": True,
@@ -294,55 +200,51 @@ class Datubot(AndroidVisionBot):
             "teleport_point_count": int(len(locations)),
         }
 
-    def recieve_baotu_task(self) -> Dict:
+    def receive_baotu_task(self) -> Dict:
         max_retry = 10
-        thr_receive_task = botconfig.env_float("ANDROID_THR_BAOTU_RECEIVE_TASK", botconfig.ANDROID_THR_BAOTU_RECEIVE_TASK)
-        attempts = []
 
         tap_center = self._tap_screen_center(sleep_after=1.5)
 
         for i in range(1, max_retry + 1):
             step = self.click_xiaoer()
             img_bgr = self.screenshot_bgr()
-            best_task = self._match_once(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
+            #todo 出来的不一定是婷婷无妨，也可能是反脚本检测
+            best_task = self._match_once(
+                img_bgr, botconfig.ANDROID_TPL_BAOTU_RECEIVE_TASK, threshold=botconfig.ANDROID_THR_BAOTU_RECEIVE_TASK
+            )
             if best_task is not None:
                 (top_left, conf) = best_task
-                p_task = self._tap_template(img_bgr, self.tpl_baotu_receive_task, threshold=thr_receive_task)
+                p_task = self._tap_template(
+                    img_bgr, botconfig.ANDROID_TPL_BAOTU_RECEIVE_TASK, threshold=botconfig.ANDROID_THR_BAOTU_RECEIVE_TASK
+                )
                 return {
-                    "ok": True,
-                    "attempt": i,
-                    "tap_center_before_loop": tap_center,
-                    "step": step,
-                    "receive_task": {"template": self.tpl_baotu_receive_task, "top_left": top_left, "confidence": float(conf), "tap": p_task},
+                    "ok": True
                 }
-            attempts.append({"attempt": i, "step": step, "receive_task": None})
 
-        raise RuntimeError(f"领取宝图任务失败，重试超过{max_retry}次: {attempts}")
+        raise RuntimeError(f"领取宝图任务失败，重试超过{max_retry}次")
 
     def click_xiaoer(self) -> Dict:
         step_1 = self.go_to_xiaoer(tap_top_right=True)
-        time.sleep(1)
+        wait_until_arrived_by_coord()
         step_2 = self.go_to_xiaoer(tap_top_right=False)
         return {"ok": bool(step_1.get("ok")) and bool(step_2.get("ok")), "step_1": step_1, "sleep_s": 0.5, "step_2": step_2}
 
     def go_to_xiaoer(self, tap_top_right: bool = False) -> Dict:
-        thr_expand = botconfig.env_float("ANDROID_THR_SYSTEM_EXPAND", botconfig.ANDROID_THR_SYSTEM_EXPAND)
-        thr_xiaoer = botconfig.env_float("ANDROID_THR_NPC_XIAOER", botconfig.ANDROID_THR_NPC_XIAOER)
-        thr_back = botconfig.env_float("ANDROID_THR_SYSTEM_BACK", botconfig.ANDROID_THR_SYSTEM_BACK)
-
-        p_expand = self._try_tap(self.tpl_system_expand, threshold=thr_expand)
+        p_expand = self._try_tap(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
 
         img_bgr = self.screenshot_bgr()
-        matched = self._match_first_of_templates(img_bgr, [self.tpl_npc_dianxiaoer_1, self.tpl_npc_dianxiaoer_2, self.tpl_npc_dianxiaoer_3], threshold=thr_xiaoer)
+        matched = self._match_first_of_templates(
+            img_bgr,
+            [botconfig.ANDROID_TPL_NPC_DIANXIAOER_1, botconfig.ANDROID_TPL_NPC_DIANXIAOER_2, botconfig.ANDROID_TPL_NPC_DIANXIAOER_3],
+            threshold=botconfig.ANDROID_THR_NPC_XIAOER,
+        )
         if matched is None:
-            self._try_tap(self.tpl_system_back, threshold=thr_back)
+            self._try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
             return {"ok": False, "reason": "npc_not_found", "tap_expand": p_expand}
 
         tpl = str(matched["template"])
         top_left = matched["top_left"]
         conf = float(matched["confidence"])
-        tap_center = None
-        tap_top_right_pt = None
         if tap_top_right:
             w, h = self._get_template_wh(tpl)
             margin = max(5, int(min(w, h) * 0.15))
@@ -350,90 +252,77 @@ class Datubot(AndroidVisionBot):
             x = int(top_left[0] + w - margin)
             y = int(top_left[1] + margin)
             self.adb.tap(x + 10, y + 10)
-            tap_top_right_pt = (x, y)
         else:
-            tap_center = self._tap_matched_center(img_bgr, tpl, top_left)
-        p_back = self._try_tap(self.tpl_system_back, threshold=thr_back)
-        # time.sleep(self.step_sleep_s)
+            self._tap_matched_center(img_bgr, tpl, top_left)
+        p_back = self._try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
 
         return {
-            "ok": True,
-            "tap_expand": p_expand,
-            "template": tpl,
-            "confidence": conf,
-            "top_left": top_left,
-            "tap_pos": "top_right" if tap_top_right else "center",
-            "tap_center": tap_center,
-            "tap_top_right": tap_top_right_pt,
-            "tap_back": p_back,
+            "ok": True
         }
 
     def enter_hotel(self) -> Dict:
-        thr_expand = botconfig.env_float("ANDROID_THR_SYSTEM_EXPAND", botconfig.ANDROID_THR_SYSTEM_EXPAND)
-        thr_hotel_door = botconfig.env_float("ANDROID_THR_CHANGAN_HOTEL_DOOR", botconfig.ANDROID_THR_CHANGAN_HOTEL_DOOR)
-        thr_back = botconfig.env_float("ANDROID_THR_SYSTEM_BACK", botconfig.ANDROID_THR_SYSTEM_BACK)
-
-        p_expand = self._tap(self.tpl_system_expand, threshold=thr_expand)
-        p_hotel_door = self._tap(self.tpl_changan_hotel_door, threshold=thr_hotel_door)
-        p_back = self._tap(self.tpl_system_back, threshold=thr_back)
+        p_expand = self._tap(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
+        p_hotel_door = self._tap(botconfig.ANDROID_TPL_CHANGAN_HOTEL_DOOR, threshold=botconfig.ANDROID_THR_CHANGAN_HOTEL_DOOR)
+        p_back = self._tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
         return {"ok": True, "tap_expand": p_expand, "tap_hotel_door": p_hotel_door, "tap_back": p_back}
 
-    def excutedatu(self) -> Dict:
-        self.cleanup_desktop()
-        detected = self.detect_current_map()
+    def _prepare_receive_baotu_task(self) -> None:
+        cleanup = self.cleanup_desktop()
         fly = self.fly_to_hotel()
         enter = self.enter_hotel()
+
+    def _judge_after_receive(self) -> Dict[str, Any]:
+        time.sleep(max(0.5, float(botconfig.ANDROID_STEP_SLEEP_S)))
+        img_bgr = self.screenshot_bgr()
+        judged = route_image_intent(img_bgr)
+        return {"judged": judged}
+
+    def _got_baotu_task(self, judged: Dict[str, Any]) -> bool:
+        return str(judged.get("category", "")).strip().lower() in ("mhxy_baotu", "baotu", "mhxy")
+
+    def _build_qiangdao_plan_after_got_baotu(self) -> Dict[str, Any]:
+        tap_center = self._tap_screen_center()
+        extracted = self._capture_and_extract_baotu_llm()
+        llm_qiangdao_name = extracted["llm_qiangdao_name"]
+        llm_map_name = extracted["llm_map_name"]
+        llm_coord = extracted["llm_coord"]
+        strategy = select_map_strategy(llm_map_name)
+        qiangdao_plan = strategy.execute(self, destination=llm_map_name, coord=llm_coord)
+        return {
+            "tap_center_after_got_baotu": tap_center,
+            "llm_qiangdao_name": llm_qiangdao_name,
+            "llm_map_name": llm_map_name,
+            "llm_coord": llm_coord,
+            "qiangdao_plan": qiangdao_plan,
+        }
+
+    def _try_receive_and_judge_baotu_once(self, attempt: int) -> Dict[str, Any]:
+        try:
+            receive = self.receive_baotu_task()
+        except Exception as e:
+            return {"attempt": attempt, "receive_error": str(e)}
+
+        try:
+            judged = self._judge_after_receive()["judged"]
+        except Exception as e:
+            judged = {"category": "other", "error": str(e)}
+
+        got_baotu = self._got_baotu_task(judged)
+        return {"attempt": attempt, "receive": receive, "judge": judged, "got_baotu": got_baotu}
+
+    def excutedatu(self) -> None:
+        self._prepare_receive_baotu_task()
         attempts = []
+        llm_map_name = ""
         for i in range(1, 4):
-            receive = None
-            try:
-                receive = self.recieve_baotu_task()
-            except Exception as e:
-                attempts.append({"attempt": i, "receive_error": str(e)})
+            attempt_result = self._try_receive_and_judge_baotu_once(i)
+            attempts.append(attempt_result)
+
+            if not bool(attempt_result.get("got_baotu")):
                 continue
 
-            time.sleep(max(0.5, float(self.step_sleep_s)))
-            img_bgr = self.screenshot_bgr()
-            try:
-                from agent_service import route_image_intent
-                judged = route_image_intent(img_bgr)
-            except Exception as e:
-                judged = {"category": "other", "error": str(e)}
-
-            got_baotu = str(judged.get("category", "")).strip().lower() in ("mhxy_baotu", "baotu", "mhxy")
-            attempts.append({"attempt": i, "receive": receive, "judge": judged, "got_baotu": got_baotu})
-            if got_baotu:
-                tap_center = self._tap_screen_center()
-                extracted = self._capture_and_extract_baotu_llm()
-                llm_qiangdao_name = extracted["llm_qiangdao_name"]
-                llm_map_name = extracted["llm_map_name"]
-                llm_coord = extracted["llm_coord"]
-                strategy = select_map_strategy(llm_map_name)
-                qiangdao_plan = strategy.execute(self, destination=llm_map_name, coord=llm_coord)
-                return {
-                    "ok": True,
-                    "branch": "fly_enter_receive",
-                    "map_name": llm_map_name,
-                    "detected": detected,
-                    "fly_to_hotel": fly,
-                    "enter_hotel": enter,
-                    "tap_center_after_got_baotu": tap_center,
-                    "llm_qiangdao_name": llm_qiangdao_name,
-                    "llm_map_name": llm_map_name,
-                    "llm_coord": llm_coord,
-                    "qiangdao_plan": qiangdao_plan,
-                }
-
-        return {
-            "ok": False,
-            "reason": "baotu_task_not_detected_after_receive",
-            "branch": "fly_enter_receive",
-            "map_name": llm_map_name,
-            "detected": detected,
-            "fly_to_hotel": fly,
-            "enter_hotel": enter,
-            "attempts": attempts,
-        }
+            plan = self._build_qiangdao_plan_after_got_baotu()
+            llm_map_name = str(plan.get("llm_map_name", "") or "").strip()
 
 
 def main() -> None:

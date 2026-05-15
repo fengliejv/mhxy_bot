@@ -9,7 +9,7 @@ import numpy as np
 import botconfig
 import siliflow_client
 import sys_util
-from adb_util import AdbClient
+from adb_util import AdbClient, get_adb_client
 from image_matcher import match_template
 
 
@@ -35,9 +35,7 @@ def _template_center_from_top_left(template_path: str, top_left: Tuple[int, int]
 
 class AndroidVisionBot:
     def __init__(self, adb: Optional[AdbClient] = None) -> None:
-        self.adb = adb or AdbClient()
-        self.match_threshold = botconfig.env_float("ANDROID_MATCH_THRESHOLD", botconfig.ANDROID_MATCH_THRESHOLD)
-        self.step_sleep_s = botconfig.env_float("ANDROID_STEP_SLEEP_S", botconfig.ANDROID_STEP_SLEEP_S)
+        self.adb = adb or get_adb_client()
         self._tpl_wh_cache: Dict[str, Tuple[int, int]] = {}
 
     def screenshot_bgr(self) -> np.ndarray:
@@ -55,7 +53,7 @@ class AndroidVisionBot:
         return w, h
 
     def _match_once(self, img_bgr: np.ndarray, template_path: str, threshold: Optional[float] = None):
-        thr = self.match_threshold if threshold is None else threshold
+        thr = botconfig.ANDROID_MATCH_THRESHOLD if threshold is None else threshold
         ok, _, locations = match_template(img_bgr, template_path, threshold=thr, find_all=True)
         if not ok or not locations:
             return None
@@ -97,13 +95,13 @@ class AndroidVisionBot:
             raise RuntimeError(f"模板匹配失败: {template_path}")
         (top_left, _) = best
         cx, cy = _template_center_from_top_left(template_path, top_left, extra_offset=extra_offset)
+        self.adb.tap(cx, cy)
         try:
             dbg = img_bgr.copy()
             cv2.drawMarker(dbg, (int(cx), int(cy)), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=40, thickness=2)
             sys_util.save_debug_image(dbg, f"android_tap_{os.path.basename(template_path)}_{cx}_{cy}")
         except Exception:
             pass
-        self.adb.tap(cx, cy)
         return cx, cy
 
     def _tap_matched_center(self, img_bgr: np.ndarray, template_path: str, top_left: Tuple[int, int], extra_offset: Tuple[int, int] = (0, 0)) -> Tuple[int, int]:
@@ -120,7 +118,7 @@ class AndroidVisionBot:
     def _tap(self, template_path: str, threshold: Optional[float] = None, extra_offset: Tuple[int, int] = (0, 0)) -> Tuple[int, int]:
         img_bgr = self.screenshot_bgr()
         pt = self._tap_template(img_bgr, template_path, threshold=threshold, extra_offset=extra_offset)
-        time.sleep(self.step_sleep_s)
+        time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
         return pt
 
     def _try_tap_template(self, img_bgr: np.ndarray, template_path: str, threshold: Optional[float] = None, extra_offset: Tuple[int, int] = (0, 0), sleep_after: Optional[float] = None) -> Optional[Dict]:
@@ -136,7 +134,7 @@ class AndroidVisionBot:
             sys_util.save_debug_image(dbg, f"android_tap_{os.path.basename(template_path)}_{cx}_{cy}")
         except Exception:
             pass
-        time.sleep(self.step_sleep_s if sleep_after is None else float(sleep_after))
+        time.sleep(botconfig.ANDROID_STEP_SLEEP_S if sleep_after is None else float(sleep_after))
         return {"template": template_path, "top_left": top_left, "confidence": float(conf), "tap": (cx, cy)}
 
     def _try_tap(self, template_path: str, threshold: Optional[float] = None, extra_offset: Tuple[int, int] = (0, 0)) -> Optional[Tuple[int, int]]:
@@ -153,7 +151,7 @@ class AndroidVisionBot:
             sys_util.save_debug_image(dbg, f"android_tap_{os.path.basename(template_path)}_{cx}_{cy}")
         except Exception:
             pass
-        time.sleep(self.step_sleep_s)
+        time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
         return cx, cy
 
     def try_tap_best(self, template_paths, threshold: float = 0.8, extra_offset: Tuple[int, int] = (0, 0), sleep_after: Optional[float] = None) -> Optional[Dict]:
@@ -164,28 +162,33 @@ class AndroidVisionBot:
         tpl = str(matched["template"])
         top_left = matched["top_left"]
         pt = self._tap_matched_center(img_bgr, tpl, top_left, extra_offset=extra_offset)
-        time.sleep(self.step_sleep_s if sleep_after is None else float(sleep_after))
+        time.sleep(botconfig.ANDROID_STEP_SLEEP_S if sleep_after is None else float(sleep_after))
         return {"template": tpl, "top_left": top_left, "confidence": float(matched["confidence"]), "tap": pt}
+        
+    def _tap_screen_center(self, sleep_after: float = 0.0) -> Tuple[int, int]:
+        img_bgr = self.screenshot_bgr()
+        h, w = img_bgr.shape[:2]
+        x = int(w / 2)
+        y = int(h / 2)
+        self.adb.tap(x, y)
+        if float(sleep_after) > 0:
+            time.sleep(float(sleep_after))
+        return x, y
 
-
-def navigate_to_coord(
-    adb: AdbClient,
-    x: int,
-    y: int,
-) -> Dict[str, Any]:
-    step_sleep_s = botconfig.env_float("ANDROID_STEP_SLEEP_S", botconfig.ANDROID_STEP_SLEEP_S)
-    match_threshold = botconfig.env_float("ANDROID_MATCH_THRESHOLD", botconfig.ANDROID_MATCH_THRESHOLD)
-    thr_map_button = botconfig.env_float("ANDROID_THR_MAP_BUTTON", botconfig.ANDROID_THR_MAP_BUTTON)
-    thr_map_x = botconfig.env_float("ANDROID_THR_MAP_X", botconfig.ANDROID_THR_MAP_X)
-    thr_map_y = botconfig.env_float("ANDROID_THR_MAP_Y", botconfig.ANDROID_THR_MAP_Y)
-    thr_map_go = botconfig.env_float("ANDROID_THR_MAP_GO", botconfig.ANDROID_THR_MAP_GO)
+def navigate_to_coord(x: int, y: int) -> Dict[str, Any]:
+    adb = get_adb_client()
+    step_sleep_s = botconfig.ANDROID_STEP_SLEEP_S
+    thr_map_button = botconfig.ANDROID_THR_MAP_BUTTON
+    thr_map_x = botconfig.ANDROID_THR_MAP_X
+    thr_map_y = botconfig.ANDROID_THR_MAP_Y
+    thr_map_go = botconfig.ANDROID_THR_MAP_GO
 
     tpl_map_x = "assets/android/map/map_x.jpg"
     tpl_map_y = "assets/android/map/map_y.jpg"
     tpl_map_go = "assets/android/map/map_go.jpg"
 
-    tpl_map_button = botconfig.env_str("ANDROID_TPL_MAP_BUTTON", botconfig.ANDROID_TPL_MAP_BUTTON)
-    tpl_map_button_2 = botconfig.env_str("ANDROID_TPL_MAP_BUTTON_2", botconfig.ANDROID_TPL_MAP_BUTTON_2)
+    tpl_map_button = botconfig.ANDROID_TPL_MAP_BUTTON
+    tpl_map_button_2 = botconfig.ANDROID_TPL_MAP_BUTTON_2
 
     def _match_once(img_bgr: np.ndarray, template_path: str, threshold: float):
         ok, _, locations = match_template(img_bgr, template_path, threshold=threshold, find_all=True)
@@ -240,8 +243,8 @@ def navigate_to_coord(
     time.sleep(step_sleep_s)
     p_x = _tap_template(tpl_map_x, threshold=thr_map_x)
 
-    adb_ime = botconfig.env_str("ANDROID_ADB_IME_ID", botconfig.ANDROID_ADB_IME_ID)
-    sogou_ime = botconfig.env_str("ANDROID_SOGOU_IME_ID", botconfig.ANDROID_SOGOU_IME_ID)
+    adb_ime = botconfig.ANDROID_ADB_IME_ID
+    sogou_ime = botconfig.ANDROID_SOGOU_IME_ID
     adb.ime_set(adb_ime)
     time.sleep(step_sleep_s)
     adb.adbkeyboard_input_text(str(int(x)))
@@ -256,7 +259,7 @@ def navigate_to_coord(
     time.sleep(step_sleep_s)
 
     p_go = _tap_template(tpl_map_go, threshold=thr_map_go)
-    arrival = wait_until_arrived_by_coord(adb, target_x=int(x), target_y=int(y))
+    arrival = wait_until_arrived_by_coord()
 
     return {
         "ok": True,
@@ -304,11 +307,12 @@ def _extract_coord(text: str) -> Optional[Tuple[int, int]]:
     return None
 
 
-def detect_coord_by_roi(adb: AdbClient) -> Dict[str, Any]:
-    roi_text = botconfig.env_str("ANDROID_COORD_ROI", botconfig.ANDROID_COORD_ROI)
+def detect_coord_by_roi() -> Dict[str, Any]:
+    adb = get_adb_client()
+    roi_text = botconfig.ANDROID_COORD_ROI
     if not roi_text:
         return {"ok": False, "reason": "missing_android_coord_roi", "coord": None}
-    roi = _parse_roi(roi_text, "ANDROID_COORD_ROI")
+    roi = _parse_roi(roi_text, botconfig.KEY_ANDROID_COORD_ROI)
     img_bgr = adb.screenshot_bgr()
     png_bytes = _crop_png_bytes(img_bgr, roi)
     ocr_result = siliflow_client.siliconflow_paddleocr(png_bytes)
@@ -317,27 +321,27 @@ def detect_coord_by_roi(adb: AdbClient) -> Dict[str, Any]:
     return {"ok": True, "coord": coord, "raw_text": raw_text, "roi": list(roi), "raw_ocr": ocr_result}
 
 
-def wait_until_arrived_by_coord(adb: AdbClient, target_x: int, target_y: int) -> Dict[str, Any]:
-    max_wait_s = botconfig.env_float("ANDROID_ARRIVAL_MAX_WAIT_S", botconfig.ANDROID_ARRIVAL_MAX_WAIT_S)
-    interval_s = botconfig.env_float("ANDROID_ARRIVAL_CHECK_INTERVAL_S", botconfig.ANDROID_ARRIVAL_CHECK_INTERVAL_S)
-    stable_need = botconfig.env_int("ANDROID_ARRIVAL_STABLE_COUNT", botconfig.ANDROID_ARRIVAL_STABLE_COUNT)
+def wait_until_arrived_by_coord() -> Dict[str, Any]:
+    max_wait_s = botconfig.ANDROID_ARRIVAL_MAX_WAIT_S
+    interval_s = botconfig.ANDROID_ARRIVAL_CHECK_INTERVAL_S
+    stable_need = botconfig.ANDROID_ARRIVAL_STABLE_COUNT
     deadline = time.time() + max(1.0, max_wait_s)
     stable = 0
     last = None
     samples = 0
 
     while time.time() < deadline:
-        r = detect_coord_by_roi(adb)
+        r = detect_coord_by_roi()
         samples += 1
         coord = r.get("coord")
-        if coord is not None and coord == (int(target_x), int(target_y)):
+        if coord is not None:
             if coord == last:
                 stable += 1
             else:
                 stable = 1
                 last = coord
             if stable >= stable_need:
-                return {"arrived": True, "coord": coord, "samples": samples, "target": (int(target_x), int(target_y))}
+                return {"arrived": True, "coord": coord, "samples": samples}
         time.sleep(max(0.1, interval_s))
 
-    return {"arrived": False, "coord": last, "samples": samples, "target": (int(target_x), int(target_y))}
+    return {"arrived": False, "coord": last, "samples": samples}

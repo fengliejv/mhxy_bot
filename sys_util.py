@@ -9,6 +9,7 @@ try:
     from PIL import Image as _PIL_Image
 except Exception:
     _PIL_Image = None
+import botconfig
 
 _debug_queue: "queue.Queue[tuple]" = queue.Queue(maxsize=256)
 _debug_worker_started = False
@@ -92,14 +93,10 @@ def _debug_worker_loop() -> None:
 
 
 def load_dotenv(path: str = ".env") -> None:
-    import botconfig
-
     botconfig.init(path)
 
 
 def save_debug_image(img, name: str) -> None:
-        import botconfig
-
         is_debug = bool(botconfig.is_debug())
         if not is_debug:
             return

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import botconfig
+import siliflow_client
 
 
 ImageInput = Union[str, bytes, bytearray, memoryview, Any]
@@ -40,10 +41,6 @@ def _to_png_bytes(image: ImageInput) -> bytes:
 
 def _qwen_classify_and_extract(image: ImageInput) -> Dict[str, Any]:
     png = _to_png_bytes(image)
-    # if os.getenv("DEBUG", "").strip().lower() in ("1", "true", "yes"):
-    #     os.makedirs("debug_capture", exist_ok=True)
-    #     with open(os.path.join("debug_capture", "agent_intent_input.png"), "wb") as f:
-    #         f.write(png)
     schema = {
         "type": "object",
         "properties": {
@@ -77,10 +74,6 @@ def _qwen_classify_and_extract(image: ImageInput) -> Dict[str, Any]:
         "若 category=word_puzzle：提取 answer_phrase(四字词语) 与 answer_indices(长度为4的整数数组，1-based，表示点击顺序对应下方字块的位置)。\n"
         "若无法确定字段则返回空字符串或 [ ] 并尽量给出你最可信的结果。\n"
     )
-    try:
-        import siliflow_client
-    except Exception as e:
-        raise RuntimeError("缺少 siliflow_client 或其依赖（numpy/opencv/pillow 等）") from e
     resp = siliflow_client.siliconflow_qwen_structured(png, prompt=prompt, schema=schema)
     print(f"qwen_classify_and_extract: {resp}")
     parsed = resp.get("parsed")
@@ -107,10 +100,6 @@ def extract_baotu_info(image: ImageInput) -> Dict[str, Any]:
         "3) coord：坐标 [x,y]（没有或看不清则为 null）\n"
         "只返回 JSON。"
     )
-    try:
-        import siliflow_client
-    except Exception as e:
-        raise RuntimeError("缺少 siliflow_client 或其依赖（numpy/opencv/pillow 等）") from e
     resp = siliflow_client.siliconflow_qwen_structured(png, prompt=prompt, schema=schema)
     parsed = resp.get("parsed")
     if not isinstance(parsed, dict):

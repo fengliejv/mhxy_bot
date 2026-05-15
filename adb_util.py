@@ -9,6 +9,8 @@ import io
 import botconfig
 import sys_util
 
+_ADB_CLIENT: Optional["AdbClient"] = None
+
 
 def _adb_escape_text(text: str) -> str:
     s = str(text)
@@ -25,8 +27,8 @@ def _adb_escape_text(text: str) -> str:
 
 class AdbClient:
     def __init__(self, serial: Optional[str] = None, adb_path: Optional[str] = None) -> None:
-        env_serial = botconfig.env_optional_str("ADB_SERIAL")
-        resolved_adb_path = adb_path or botconfig.env_str("ADB_PATH", botconfig.ADB_PATH) or botconfig.ADB_PATH
+        env_serial = botconfig.ADB_SERIAL
+        resolved_adb_path = adb_path or botconfig.ADB_PATH
         self.serial = serial or env_serial or self._auto_pick_serial(resolved_adb_path)
         self.adb_path = resolved_adb_path
 
@@ -195,3 +197,9 @@ class AdbClient:
         nums = [x for x in out.split() if x.strip().isdigit()]
         return int(nums[0]) if nums else None
 
+
+def get_adb_client() -> AdbClient:
+    global _ADB_CLIENT
+    if _ADB_CLIENT is None:
+        _ADB_CLIENT = AdbClient()
+    return _ADB_CLIENT

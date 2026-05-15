@@ -2,6 +2,7 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 import botconfig
+from vision_bot import navigate_to_coord
 
 
 class LocationStrategy:
@@ -31,21 +32,15 @@ class Location_with_fly(LocationStrategy):
         if not map_tpl:
             return {"ok": False, "reason": "unsupported_destination", "strategy": self.name, "destination": destination, "coord": coord}
 
-        thr_menu_daoju = botconfig.env_float("ANDROID_THR_MENU_DAOJU", botconfig.ANDROID_THR_MENU_DAOJU)
-        thr_feixingfu = botconfig.env_float("ANDROID_THR_PROP_FEIXINGFU", botconfig.ANDROID_THR_PROP_FEIXINGFU)
-        thr_use = botconfig.env_float("ANDROID_THR_PROP_USE", botconfig.ANDROID_THR_PROP_USE)
-        thr_map = botconfig.env_float("ANDROID_THR_FEIXINGFU_MAP", botconfig.ANDROID_THR_FEIXINGFU_MAP)
-        thr_close = botconfig.env_float("ANDROID_THR_DAOJU_CLOSE", botconfig.ANDROID_THR_DAOJU_CLOSE)
-
         tpl_feixingfu = "assets/android/daoju/feixingfu.png"
-        tpl_use = "assets/android/daoju/jiemian/shiyong.png"
+        tpl_use = botconfig.ANDROID_TPL_PROP_USE
         tpl_close_bag = "assets/android/daoju/jiemian/guanbi.png"
 
-        tap_menu = bot._tap(bot.tpl_menu_daoju, threshold=thr_menu_daoju)
-        tap_feixingfu = bot._tap(tpl_feixingfu, threshold=thr_feixingfu)
-        tap_use = bot._tap(tpl_use, threshold=thr_use)
-        tap_map = bot._tap(map_tpl, threshold=thr_map)
-        tap_close = bot._try_tap(tpl_close_bag, threshold=thr_close)
+        tap_menu = bot._tap(botconfig.ANDROID_TPL_MENU_DAOJU, threshold=botconfig.ANDROID_THR_MENU_DAOJU)
+        tap_feixingfu = bot._tap(tpl_feixingfu, threshold=botconfig.ANDROID_THR_PROP_FEIXINGFU)
+        tap_use = bot._tap(tpl_use, threshold=botconfig.ANDROID_THR_PROP_USE)
+        tap_map = bot._tap(map_tpl, threshold=botconfig.ANDROID_THR_FEIXINGFU_MAP)
+        tap_close = bot._try_tap(tpl_close_bag, threshold=botconfig.ANDROID_THR_DAOJU_CLOSE)
         return {
             "ok": True,
             "strategy": self.name,
@@ -64,22 +59,19 @@ class Location_shituo(Location_with_fly):
     name = "shituo"
 
     def execute(self, bot: Any, destination: str, coord: Optional[Tuple[int, int]]) -> Dict[str, Any]:
-        from vision_bot import navigate_to_coord
-
         fly = super().execute(bot, destination="朱紫国", coord=None)
         if not bool(fly.get("ok")):
             return {"ok": False, "reason": "fly_to_zhuziguo_failed", "strategy": self.name, "fly": fly}
 
-        nav = navigate_to_coord(bot.adb, x=7, y=4)
+        nav = navigate_to_coord(x=7, y=4)
         arrival = nav.get("arrival")
 
-        thr_transfer = botconfig.env_float("ANDROID_THR_SYSTEM_TRANSFER", botconfig.ANDROID_THR_SYSTEM_TRANSFER)
-        max_retry = botconfig.env_int("ANDROID_TRANSFER_RETRY", botconfig.ANDROID_TRANSFER_RETRY)
-        retry_sleep_s = botconfig.env_float("ANDROID_TRANSFER_RETRY_SLEEP_S", botconfig.ANDROID_TRANSFER_RETRY_SLEEP_S)
+        max_retry = botconfig.ANDROID_TRANSFER_RETRY
+        retry_sleep_s = botconfig.ANDROID_TRANSFER_RETRY_SLEEP_S
         tpl_transfer = r"assets\android\system\transfer.jpg"
         tap_transfer = None
         for _ in range(max(1, max_retry)):
-            tap_transfer = bot._try_tap(tpl_transfer, threshold=thr_transfer)
+            tap_transfer = bot._try_tap(tpl_transfer, threshold=botconfig.ANDROID_THR_SYSTEM_TRANSFER)
             if tap_transfer is not None:
                 break
             time.sleep(max(0.1, retry_sleep_s))
@@ -87,7 +79,7 @@ class Location_shituo(Location_with_fly):
         if tap_transfer is None:
             return {"ok": False, "reason": "transfer_not_found", "strategy": self.name, "fly": fly, "navigate": nav, "arrival": arrival}
 
-        time.sleep(max(0.5, float(bot.step_sleep_s)))
+        time.sleep(max(0.5, float(botconfig.ANDROID_STEP_SLEEP_S)))
         detected_after = bot.detect_current_map()
         return {
             "ok": True,
