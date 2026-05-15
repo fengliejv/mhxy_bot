@@ -26,7 +26,7 @@ def _adb_escape_text(text: str) -> str:
 class AdbClient:
     def __init__(self, serial: Optional[str] = None, adb_path: Optional[str] = None) -> None:
         env_serial = botconfig.env_optional_str("ADB_SERIAL")
-        resolved_adb_path = adb_path or botconfig.env_str("ADB_PATH", "adb") or "adb"
+        resolved_adb_path = adb_path or botconfig.env_str("ADB_PATH", botconfig.ADB_PATH) or botconfig.ADB_PATH
         self.serial = serial or env_serial or self._auto_pick_serial(resolved_adb_path)
         self.adb_path = resolved_adb_path
 

@@ -31,11 +31,11 @@ class Location_with_fly(LocationStrategy):
         if not map_tpl:
             return {"ok": False, "reason": "unsupported_destination", "strategy": self.name, "destination": destination, "coord": coord}
 
-        thr_menu_daoju = botconfig.env_float("ANDROID_THR_MENU_DAOJU", float(bot.match_threshold))
-        thr_feixingfu = botconfig.env_float("ANDROID_THR_PROP_FEIXINGFU", float(bot.match_threshold))
-        thr_use = botconfig.env_float("ANDROID_THR_PROP_USE", float(bot.match_threshold))
-        thr_map = botconfig.env_float("ANDROID_THR_FEIXINGFU_MAP", float(bot.match_threshold))
-        thr_close = botconfig.env_float("ANDROID_THR_DAOJU_CLOSE", float(bot.match_threshold))
+        thr_menu_daoju = botconfig.env_float("ANDROID_THR_MENU_DAOJU", botconfig.ANDROID_THR_MENU_DAOJU)
+        thr_feixingfu = botconfig.env_float("ANDROID_THR_PROP_FEIXINGFU", botconfig.ANDROID_THR_PROP_FEIXINGFU)
+        thr_use = botconfig.env_float("ANDROID_THR_PROP_USE", botconfig.ANDROID_THR_PROP_USE)
+        thr_map = botconfig.env_float("ANDROID_THR_FEIXINGFU_MAP", botconfig.ANDROID_THR_FEIXINGFU_MAP)
+        thr_close = botconfig.env_float("ANDROID_THR_DAOJU_CLOSE", botconfig.ANDROID_THR_DAOJU_CLOSE)
 
         tpl_feixingfu = "assets/android/daoju/feixingfu.png"
         tpl_use = "assets/android/daoju/jiemian/shiyong.png"
@@ -73,9 +73,9 @@ class Location_shituo(Location_with_fly):
         nav = navigate_to_coord(bot.adb, x=7, y=4)
         arrival = nav.get("arrival")
 
-        thr_transfer = botconfig.env_float("ANDROID_THR_SYSTEM_TRANSFER", float(bot.match_threshold))
-        max_retry = botconfig.env_int("ANDROID_TRANSFER_RETRY", 10)
-        retry_sleep_s = botconfig.env_float("ANDROID_TRANSFER_RETRY_SLEEP_S", float(bot.step_sleep_s))
+        thr_transfer = botconfig.env_float("ANDROID_THR_SYSTEM_TRANSFER", botconfig.ANDROID_THR_SYSTEM_TRANSFER)
+        max_retry = botconfig.env_int("ANDROID_TRANSFER_RETRY", botconfig.ANDROID_TRANSFER_RETRY)
+        retry_sleep_s = botconfig.env_float("ANDROID_TRANSFER_RETRY_SLEEP_S", botconfig.ANDROID_TRANSFER_RETRY_SLEEP_S)
         tpl_transfer = r"assets\android\system\transfer.jpg"
         tap_transfer = None
         for _ in range(max(1, max_retry)):

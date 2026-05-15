@@ -94,7 +94,7 @@ def mineru_parse_keep_artifacts(
     if not src.is_file():
         raise FileNotFoundError(str(src))
 
-    cmd = (mineru_cmd or botconfig.env_str("MINERU_CMD", "") or "mineru").strip()
+    cmd = (mineru_cmd or botconfig.env_str("MINERU_CMD", botconfig.MINERU_CMD) or "mineru").strip()
     if not cmd:
         cmd = "mineru"
     if shutil.which(cmd) is None:

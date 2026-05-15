@@ -48,59 +48,38 @@ def _extract_coord(text: str) -> Optional[Tuple[int, int]]:
     return None
 
 
-def _extract_destination(text: str) -> str:
-    s = str(text or "").strip()
-    if not s:
-        return ""
-    candidates = [
-        "建业城",
-        "长寿村",
-        "朱紫国",
-        "傲来国",
-        "宝象国",
-        "长安郊外",
-        "东海湾",
-        "长安城",
-        "长安酒馆",
-    ]
-    for name in candidates:
-        if name in s:
-            return name
-    return s
-
-
 class Datubot(AndroidVisionBot):
 
     def __init__(self, adb=None) -> None:
         super().__init__(adb=adb)
-        self.map_roi_text = botconfig.env_str("MHXY_MAP_ROI", "")
-        self.coord_roi_text = botconfig.env_str("ANDROID_COORD_ROI", "")
+        self.map_roi_text = botconfig.env_str("MHXY_MAP_ROI", botconfig.MHXY_MAP_ROI)
+        self.coord_roi_text = botconfig.env_str("ANDROID_COORD_ROI", botconfig.ANDROID_COORD_ROI)
 
-        self.tpl_map_button = botconfig.env_str("ANDROID_TPL_MAP_BUTTON", "assets/android/map/map_button.jpg")
-        self.tpl_map_button_2 = botconfig.env_str("ANDROID_TPL_MAP_BUTTON_2", "assets/android/map/map_button2.png")
-        self.tpl_map_search_icon = botconfig.env_str("ANDROID_TPL_MAP_SEARCH_ICON", "assets/android/map/map_search_icon.png")
-        self.tpl_map_input_icon = botconfig.env_str("ANDROID_TPL_MAP_INPUT_ICON", "assets/android/map/map_input_icon.png")
-        self.tpl_map_go = botconfig.env_str("ANDROID_TPL_MAP_GO", "assets/android/map/map_go.jpg")
-        self.tpl_map_exit = botconfig.env_str("ANDROID_TPL_MAP_EXIT", "assets/android/map/map_exit.jpg")
-        self.tpl_map_dianxiaoer = botconfig.env_str("ANDROID_TPL_MAP_DIANXIAOER", "assets/android/map/map_dianxiaoer.png")
-        self.tpl_map_on_the_way = botconfig.env_str("ANDROID_TPL_MAP_ON_THE_WAY", "assets/android/map/map_on_the_way.png")
-        self.tpl_menu_daoju = botconfig.env_str("ANDROID_TPL_MENU_DAOJU", "assets/android/memu/daoju.jpg")
-        self.tpl_prop_changan_flag = botconfig.env_str("ANDROID_TPL_PROP_CHANGAN_FLAG", "assets/android/daoju/changandaobiaoqi.png")
-        self.tpl_prop_use = botconfig.env_str("ANDROID_TPL_PROP_USE", "assets/android/daoju/jiemian/shiyong.png")
-        self.tpl_map_teleport_point = botconfig.env_str("ANDROID_TPL_MAP_TELEPORT_POINT", "assets/android/map/daobiaoqiditu/chuansongdian.png")
-        self.tpl_baotu_receive_task = botconfig.env_str("ANDROID_TPL_BAOTU_RECEIVE_TASK", "assets/android/baotu/tingtingwufang.png")
-        self.tpl_changan_hotel_door = botconfig.env_str("ANDROID_TPL_CHANGAN_HOTEL_DOOR", "assets/android/changancheng/jiudianmenkou.png")
-        self.tpl_system_close_guide = botconfig.env_str("ANDROID_TPL_SYSTEM_CLOSE_GUIDE", "assets/android/system/guanbizhiyin.png")
-        self.tpl_system_close_task = botconfig.env_str("ANDROID_TPL_SYSTEM_CLOSE_TASK", "assets/android/system/close_task.jpg")
-        self.tpl_system_hide_dialog = botconfig.env_str("ANDROID_TPL_SYSTEM_HIDE_DIALOG", "assets/android/system/yincangduihua.png")
-        self.tpl_system_auto_attack_shrink = botconfig.env_str("ANDROID_TPL_SYSTEM_AUTO_ATTACK_SHRINK", "assets/android/system/zidonggongjisuoxiao.png")
-        self.tpl_system_expand = botconfig.env_str("ANDROID_TPL_SYSTEM_EXPAND", "assets/android/system/expand.jpg")
-        self.tpl_system_hide_ui_disable = botconfig.env_str("ANDROID_TPL_SYSTEM_HIDE_UI_DISABLE", "assets/android/system/yincangjiemian_disable.png")
-        self.tpl_system_hide_player_disable = botconfig.env_str("ANDROID_TPL_SYSTEM_HIDE_PLAYER_DISABLE", "assets/android/system/yincangwanjia_disable.png")
-        self.tpl_system_back = botconfig.env_str("ANDROID_TPL_SYSTEM_BACK", "assets/android/system/back.png")
-        self.tpl_npc_dianxiaoer_1 = botconfig.env_str("ANDROID_TPL_NPC_DIANXIAOER_1", "assets/android/npc/dianxiaoer1.png")
-        self.tpl_npc_dianxiaoer_2 = botconfig.env_str("ANDROID_TPL_NPC_DIANXIAOER_2", "assets/android/npc/dianxiaoer2.png")
-        self.tpl_npc_dianxiaoer_3 = botconfig.env_str("ANDROID_TPL_NPC_DIANXIAOER_3", "assets/android/npc/dianxiaoer3.png")
+        self.tpl_map_button = botconfig.env_str("ANDROID_TPL_MAP_BUTTON", botconfig.ANDROID_TPL_MAP_BUTTON)
+        self.tpl_map_button_2 = botconfig.env_str("ANDROID_TPL_MAP_BUTTON_2", botconfig.ANDROID_TPL_MAP_BUTTON_2)
+        self.tpl_map_search_icon = botconfig.env_str("ANDROID_TPL_MAP_SEARCH_ICON", botconfig.ANDROID_TPL_MAP_SEARCH_ICON)
+        self.tpl_map_input_icon = botconfig.env_str("ANDROID_TPL_MAP_INPUT_ICON", botconfig.ANDROID_TPL_MAP_INPUT_ICON)
+        self.tpl_map_go = botconfig.env_str("ANDROID_TPL_MAP_GO", botconfig.ANDROID_TPL_MAP_GO)
+        self.tpl_map_exit = botconfig.env_str("ANDROID_TPL_MAP_EXIT", botconfig.ANDROID_TPL_MAP_EXIT)
+        self.tpl_map_dianxiaoer = botconfig.env_str("ANDROID_TPL_MAP_DIANXIAOER", botconfig.ANDROID_TPL_MAP_DIANXIAOER)
+        self.tpl_map_on_the_way = botconfig.env_str("ANDROID_TPL_MAP_ON_THE_WAY", botconfig.ANDROID_TPL_MAP_ON_THE_WAY)
+        self.tpl_menu_daoju = botconfig.env_str("ANDROID_TPL_MENU_DAOJU", botconfig.ANDROID_TPL_MENU_DAOJU)
+        self.tpl_prop_changan_flag = botconfig.env_str("ANDROID_TPL_PROP_CHANGAN_FLAG", botconfig.ANDROID_TPL_PROP_CHANGAN_FLAG)
+        self.tpl_prop_use = botconfig.env_str("ANDROID_TPL_PROP_USE", botconfig.ANDROID_TPL_PROP_USE)
+        self.tpl_map_teleport_point = botconfig.env_str("ANDROID_TPL_MAP_TELEPORT_POINT", botconfig.ANDROID_TPL_MAP_TELEPORT_POINT)
+        self.tpl_baotu_receive_task = botconfig.env_str("ANDROID_TPL_BAOTU_RECEIVE_TASK", botconfig.ANDROID_TPL_BAOTU_RECEIVE_TASK)
+        self.tpl_changan_hotel_door = botconfig.env_str("ANDROID_TPL_CHANGAN_HOTEL_DOOR", botconfig.ANDROID_TPL_CHANGAN_HOTEL_DOOR)
+        self.tpl_system_close_guide = botconfig.env_str("ANDROID_TPL_SYSTEM_CLOSE_GUIDE", botconfig.ANDROID_TPL_SYSTEM_CLOSE_GUIDE)
+        self.tpl_system_close_task = botconfig.env_str("ANDROID_TPL_SYSTEM_CLOSE_TASK", botconfig.ANDROID_TPL_SYSTEM_CLOSE_TASK)
+        self.tpl_system_hide_dialog = botconfig.env_str("ANDROID_TPL_SYSTEM_HIDE_DIALOG", botconfig.ANDROID_TPL_SYSTEM_HIDE_DIALOG)
+        self.tpl_system_auto_attack_shrink = botconfig.env_str("ANDROID_TPL_SYSTEM_AUTO_ATTACK_SHRINK", botconfig.ANDROID_TPL_SYSTEM_AUTO_ATTACK_SHRINK)
+        self.tpl_system_expand = botconfig.env_str("ANDROID_TPL_SYSTEM_EXPAND", botconfig.ANDROID_TPL_SYSTEM_EXPAND)
+        self.tpl_system_hide_ui_disable = botconfig.env_str("ANDROID_TPL_SYSTEM_HIDE_UI_DISABLE", botconfig.ANDROID_TPL_SYSTEM_HIDE_UI_DISABLE)
+        self.tpl_system_hide_player_disable = botconfig.env_str("ANDROID_TPL_SYSTEM_HIDE_PLAYER_DISABLE", botconfig.ANDROID_TPL_SYSTEM_HIDE_PLAYER_DISABLE)
+        self.tpl_system_back = botconfig.env_str("ANDROID_TPL_SYSTEM_BACK", botconfig.ANDROID_TPL_SYSTEM_BACK)
+        self.tpl_npc_dianxiaoer_1 = botconfig.env_str("ANDROID_TPL_NPC_DIANXIAOER_1", botconfig.ANDROID_TPL_NPC_DIANXIAOER_1)
+        self.tpl_npc_dianxiaoer_2 = botconfig.env_str("ANDROID_TPL_NPC_DIANXIAOER_2", botconfig.ANDROID_TPL_NPC_DIANXIAOER_2)
+        self.tpl_npc_dianxiaoer_3 = botconfig.env_str("ANDROID_TPL_NPC_DIANXIAOER_3", botconfig.ANDROID_TPL_NPC_DIANXIAOER_3)
 
     def detect_current_map(self) -> Dict:
         if not self.map_roi_text:
@@ -114,14 +93,14 @@ class Datubot(AndroidVisionBot):
         return {"map_name": map_name, "raw_ocr": ocr_result, "roi": list(roi)}
 
     def cleanup_desktop(self) -> Dict:
-        thr_close_guide = botconfig.env_float("ANDROID_THR_SYSTEM_CLOSE_GUIDE", float(self.match_threshold))
-        thr_close_task = botconfig.env_float("ANDROID_THR_SYSTEM_CLOSE_TASK", float(self.match_threshold))
-        thr_hide_dialog = botconfig.env_float("ANDROID_THR_SYSTEM_HIDE_DIALOG", float(self.match_threshold))
-        thr_auto_attack_shrink = botconfig.env_float("ANDROID_THR_SYSTEM_AUTO_ATTACK_SHRINK", float(self.match_threshold))
-        thr_expand = botconfig.env_float("ANDROID_THR_SYSTEM_EXPAND", float(self.match_threshold))
-        thr_hide_ui_disable = botconfig.env_float("ANDROID_THR_SYSTEM_HIDE_UI_DISABLE", float(self.match_threshold))
-        thr_hide_player_disable = botconfig.env_float("ANDROID_THR_SYSTEM_HIDE_PLAYER_DISABLE", float(self.match_threshold))
-        thr_back = botconfig.env_float("ANDROID_THR_SYSTEM_BACK", float(self.match_threshold))
+        thr_close_guide = botconfig.env_float("ANDROID_THR_SYSTEM_CLOSE_GUIDE", botconfig.ANDROID_THR_SYSTEM_CLOSE_GUIDE)
+        thr_close_task = botconfig.env_float("ANDROID_THR_SYSTEM_CLOSE_TASK", botconfig.ANDROID_THR_SYSTEM_CLOSE_TASK)
+        thr_hide_dialog = botconfig.env_float("ANDROID_THR_SYSTEM_HIDE_DIALOG", botconfig.ANDROID_THR_SYSTEM_HIDE_DIALOG)
+        thr_auto_attack_shrink = botconfig.env_float("ANDROID_THR_SYSTEM_AUTO_ATTACK_SHRINK", botconfig.ANDROID_THR_SYSTEM_AUTO_ATTACK_SHRINK)
+        thr_expand = botconfig.env_float("ANDROID_THR_SYSTEM_EXPAND", botconfig.ANDROID_THR_SYSTEM_EXPAND)
+        thr_hide_ui_disable = botconfig.env_float("ANDROID_THR_SYSTEM_HIDE_UI_DISABLE", botconfig.ANDROID_THR_SYSTEM_HIDE_UI_DISABLE)
+        thr_hide_player_disable = botconfig.env_float("ANDROID_THR_SYSTEM_HIDE_PLAYER_DISABLE", botconfig.ANDROID_THR_SYSTEM_HIDE_PLAYER_DISABLE)
+        thr_back = botconfig.env_float("ANDROID_THR_SYSTEM_BACK", botconfig.ANDROID_THR_SYSTEM_BACK)
 
         p_close_guide = self._try_tap(self.tpl_system_close_guide, threshold=thr_close_guide)
         p_close_task = self._try_tap(self.tpl_system_close_task, threshold=thr_close_task)
@@ -240,9 +219,9 @@ class Datubot(AndroidVisionBot):
         return {"coord": coord, "raw_text": text, "engine": "paddle", "roi": list(roi)}
 
     def wait_until_arrived_by_coord(self) -> Dict:
-        max_wait_s = botconfig.env_float("ANDROID_ARRIVAL_MAX_WAIT_S", 60.0)
-        interval_s = botconfig.env_float("ANDROID_ARRIVAL_CHECK_INTERVAL_S", 1.0)
-        stable_need = botconfig.env_int("ANDROID_ARRIVAL_STABLE_COUNT", 2)
+        max_wait_s = botconfig.env_float("ANDROID_ARRIVAL_MAX_WAIT_S", botconfig.ANDROID_ARRIVAL_MAX_WAIT_S)
+        interval_s = botconfig.env_float("ANDROID_ARRIVAL_CHECK_INTERVAL_S", botconfig.ANDROID_ARRIVAL_CHECK_INTERVAL_S)
+        stable_need = botconfig.env_int("ANDROID_ARRIVAL_STABLE_COUNT", botconfig.ANDROID_ARRIVAL_STABLE_COUNT)
         deadline = time.time() + max(1.0, max_wait_s)
         stable = 0
         last = None
@@ -266,17 +245,17 @@ class Datubot(AndroidVisionBot):
     def fly_to_hotel(self) -> Dict:
         from image_matcher import match_template
 
-        thr_menu_daoju = botconfig.env_float("ANDROID_THR_MENU_DAOJU", float(self.match_threshold))
-        thr_prop_changan_flag = botconfig.env_float("ANDROID_THR_PROP_CHANGAN_FLAG", float(self.match_threshold))
-        thr_prop_use = botconfig.env_float("ANDROID_THR_PROP_USE", float(self.match_threshold))
-        thr_teleport_point = botconfig.env_float("ANDROID_THR_MAP_TELEPORT_POINT", float(self.match_threshold))
+        thr_menu_daoju = botconfig.env_float("ANDROID_THR_MENU_DAOJU", botconfig.ANDROID_THR_MENU_DAOJU)
+        thr_prop_changan_flag = botconfig.env_float("ANDROID_THR_PROP_CHANGAN_FLAG", botconfig.ANDROID_THR_PROP_CHANGAN_FLAG)
+        thr_prop_use = botconfig.env_float("ANDROID_THR_PROP_USE", botconfig.ANDROID_THR_PROP_USE)
+        thr_teleport_point = botconfig.env_float("ANDROID_THR_MAP_TELEPORT_POINT", botconfig.ANDROID_THR_MAP_TELEPORT_POINT)
 
         p_menu_daoju = self._tap(self.tpl_menu_daoju, threshold=thr_menu_daoju)
         p_changan_flag = self._tap(self.tpl_prop_changan_flag, threshold=thr_prop_changan_flag)
         p_use = self._tap(self.tpl_prop_use, threshold=thr_prop_use)
 
-        target_x = botconfig.env_int("ANDROID_TELEPORT_TARGET_X", 1640)
-        target_y = botconfig.env_int("ANDROID_TELEPORT_TARGET_Y", 500)
+        target_x = botconfig.env_int("ANDROID_TELEPORT_TARGET_X", botconfig.ANDROID_TELEPORT_TARGET_X)
+        target_y = botconfig.env_int("ANDROID_TELEPORT_TARGET_Y", botconfig.ANDROID_TELEPORT_TARGET_Y)
 
         img_bgr = self.screenshot_bgr()
         ok, _, locations = match_template(img_bgr, self.tpl_map_teleport_point, threshold=thr_teleport_point, find_all=True)
@@ -317,7 +296,7 @@ class Datubot(AndroidVisionBot):
 
     def recieve_baotu_task(self) -> Dict:
         max_retry = 10
-        thr_receive_task = botconfig.env_float("ANDROID_THR_BAOTU_RECEIVE_TASK", float(self.match_threshold))
+        thr_receive_task = botconfig.env_float("ANDROID_THR_BAOTU_RECEIVE_TASK", botconfig.ANDROID_THR_BAOTU_RECEIVE_TASK)
         attempts = []
 
         tap_center = self._tap_screen_center(sleep_after=1.5)
@@ -347,9 +326,9 @@ class Datubot(AndroidVisionBot):
         return {"ok": bool(step_1.get("ok")) and bool(step_2.get("ok")), "step_1": step_1, "sleep_s": 0.5, "step_2": step_2}
 
     def go_to_xiaoer(self, tap_top_right: bool = False) -> Dict:
-        thr_expand = botconfig.env_float("ANDROID_THR_SYSTEM_EXPAND", float(self.match_threshold))
-        thr_xiaoer = botconfig.env_float("ANDROID_THR_NPC_XIAOER", 0.4)
-        thr_back = botconfig.env_float("ANDROID_THR_SYSTEM_BACK", float(self.match_threshold))
+        thr_expand = botconfig.env_float("ANDROID_THR_SYSTEM_EXPAND", botconfig.ANDROID_THR_SYSTEM_EXPAND)
+        thr_xiaoer = botconfig.env_float("ANDROID_THR_NPC_XIAOER", botconfig.ANDROID_THR_NPC_XIAOER)
+        thr_back = botconfig.env_float("ANDROID_THR_SYSTEM_BACK", botconfig.ANDROID_THR_SYSTEM_BACK)
 
         p_expand = self._try_tap(self.tpl_system_expand, threshold=thr_expand)
 
@@ -390,9 +369,9 @@ class Datubot(AndroidVisionBot):
         }
 
     def enter_hotel(self) -> Dict:
-        thr_expand = botconfig.env_float("ANDROID_THR_SYSTEM_EXPAND", float(self.match_threshold))
-        thr_hotel_door = botconfig.env_float("ANDROID_THR_CHANGAN_HOTEL_DOOR", float(self.match_threshold))
-        thr_back = botconfig.env_float("ANDROID_THR_SYSTEM_BACK", float(self.match_threshold))
+        thr_expand = botconfig.env_float("ANDROID_THR_SYSTEM_EXPAND", botconfig.ANDROID_THR_SYSTEM_EXPAND)
+        thr_hotel_door = botconfig.env_float("ANDROID_THR_CHANGAN_HOTEL_DOOR", botconfig.ANDROID_THR_CHANGAN_HOTEL_DOOR)
+        thr_back = botconfig.env_float("ANDROID_THR_SYSTEM_BACK", botconfig.ANDROID_THR_SYSTEM_BACK)
 
         p_expand = self._tap(self.tpl_system_expand, threshold=thr_expand)
         p_hotel_door = self._tap(self.tpl_changan_hotel_door, threshold=thr_hotel_door)

@@ -30,7 +30,7 @@ def detect_current_map_by_roi(
             "window_hwnd": int
         }
     """
-    roi_text = botconfig.env_str("MHXY_MAP_ROI", "")
+    roi_text = botconfig.env_str("MHXY_MAP_ROI", botconfig.MHXY_MAP_ROI)
     if not roi_text:
         raise RuntimeError("缺少 MHXY_MAP_ROI，请在 .env 配置，例如 0,0,120,120")
     x1, y1, x2, y2 = _parse_roi(roi_text)

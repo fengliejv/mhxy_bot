@@ -75,7 +75,7 @@ def click_word_puzzle_by_indices(answer_indices: Sequence[int], sleep_s: Optiona
         raise RuntimeError("缺少 adb_util 或其依赖，无法执行点击") from e
 
     if sleep_s is None:
-        sleep_s = botconfig.env_float("ANDROID_STEP_SLEEP_S", 0.25)
+        sleep_s = botconfig.env_float("ANDROID_STEP_SLEEP_S", botconfig.ANDROID_STEP_SLEEP_S_WORD_PUZZLE)
 
     adb = AdbClient()
     taps = []

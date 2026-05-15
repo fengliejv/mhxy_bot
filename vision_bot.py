@@ -36,8 +36,8 @@ def _template_center_from_top_left(template_path: str, top_left: Tuple[int, int]
 class AndroidVisionBot:
     def __init__(self, adb: Optional[AdbClient] = None) -> None:
         self.adb = adb or AdbClient()
-        self.match_threshold = botconfig.env_float("ANDROID_MATCH_THRESHOLD", 0.8)
-        self.step_sleep_s = botconfig.env_float("ANDROID_STEP_SLEEP_S", 0.4)
+        self.match_threshold = botconfig.env_float("ANDROID_MATCH_THRESHOLD", botconfig.ANDROID_MATCH_THRESHOLD)
+        self.step_sleep_s = botconfig.env_float("ANDROID_STEP_SLEEP_S", botconfig.ANDROID_STEP_SLEEP_S)
         self._tpl_wh_cache: Dict[str, Tuple[int, int]] = {}
 
     def screenshot_bgr(self) -> np.ndarray:
@@ -173,19 +173,19 @@ def navigate_to_coord(
     x: int,
     y: int,
 ) -> Dict[str, Any]:
-    step_sleep_s = botconfig.env_float("ANDROID_STEP_SLEEP_S", 0.4)
-    match_threshold = botconfig.env_float("ANDROID_MATCH_THRESHOLD", 0.8)
-    thr_map_button = botconfig.env_float("ANDROID_THR_MAP_BUTTON", 0.6)
-    thr_map_x = botconfig.env_float("ANDROID_THR_MAP_X", match_threshold)
-    thr_map_y = botconfig.env_float("ANDROID_THR_MAP_Y", match_threshold)
-    thr_map_go = botconfig.env_float("ANDROID_THR_MAP_GO", match_threshold)
+    step_sleep_s = botconfig.env_float("ANDROID_STEP_SLEEP_S", botconfig.ANDROID_STEP_SLEEP_S)
+    match_threshold = botconfig.env_float("ANDROID_MATCH_THRESHOLD", botconfig.ANDROID_MATCH_THRESHOLD)
+    thr_map_button = botconfig.env_float("ANDROID_THR_MAP_BUTTON", botconfig.ANDROID_THR_MAP_BUTTON)
+    thr_map_x = botconfig.env_float("ANDROID_THR_MAP_X", botconfig.ANDROID_THR_MAP_X)
+    thr_map_y = botconfig.env_float("ANDROID_THR_MAP_Y", botconfig.ANDROID_THR_MAP_Y)
+    thr_map_go = botconfig.env_float("ANDROID_THR_MAP_GO", botconfig.ANDROID_THR_MAP_GO)
 
     tpl_map_x = "assets/android/map/map_x.jpg"
     tpl_map_y = "assets/android/map/map_y.jpg"
     tpl_map_go = "assets/android/map/map_go.jpg"
 
-    tpl_map_button = botconfig.env_str("ANDROID_TPL_MAP_BUTTON", "assets/android/map/map_button.jpg")
-    tpl_map_button_2 = botconfig.env_str("ANDROID_TPL_MAP_BUTTON_2", "assets/android/map/map_button2.png")
+    tpl_map_button = botconfig.env_str("ANDROID_TPL_MAP_BUTTON", botconfig.ANDROID_TPL_MAP_BUTTON)
+    tpl_map_button_2 = botconfig.env_str("ANDROID_TPL_MAP_BUTTON_2", botconfig.ANDROID_TPL_MAP_BUTTON_2)
 
     def _match_once(img_bgr: np.ndarray, template_path: str, threshold: float):
         ok, _, locations = match_template(img_bgr, template_path, threshold=threshold, find_all=True)
@@ -240,8 +240,8 @@ def navigate_to_coord(
     time.sleep(step_sleep_s)
     p_x = _tap_template(tpl_map_x, threshold=thr_map_x)
 
-    adb_ime = botconfig.env_str("ANDROID_ADB_IME_ID", "com.android.adbkeyboard/.AdbIME")
-    sogou_ime = botconfig.env_str("ANDROID_SOGOU_IME_ID", "com.sohu.inputmethod.sogou.xiaomi/.SogouIME")
+    adb_ime = botconfig.env_str("ANDROID_ADB_IME_ID", botconfig.ANDROID_ADB_IME_ID)
+    sogou_ime = botconfig.env_str("ANDROID_SOGOU_IME_ID", botconfig.ANDROID_SOGOU_IME_ID)
     adb.ime_set(adb_ime)
     time.sleep(step_sleep_s)
     adb.adbkeyboard_input_text(str(int(x)))
@@ -305,7 +305,7 @@ def _extract_coord(text: str) -> Optional[Tuple[int, int]]:
 
 
 def detect_coord_by_roi(adb: AdbClient) -> Dict[str, Any]:
-    roi_text = botconfig.env_str("ANDROID_COORD_ROI", "")
+    roi_text = botconfig.env_str("ANDROID_COORD_ROI", botconfig.ANDROID_COORD_ROI)
     if not roi_text:
         return {"ok": False, "reason": "missing_android_coord_roi", "coord": None}
     roi = _parse_roi(roi_text, "ANDROID_COORD_ROI")
@@ -318,9 +318,9 @@ def detect_coord_by_roi(adb: AdbClient) -> Dict[str, Any]:
 
 
 def wait_until_arrived_by_coord(adb: AdbClient, target_x: int, target_y: int) -> Dict[str, Any]:
-    max_wait_s = botconfig.env_float("ANDROID_ARRIVAL_MAX_WAIT_S", 60.0)
-    interval_s = botconfig.env_float("ANDROID_ARRIVAL_CHECK_INTERVAL_S", 1.0)
-    stable_need = botconfig.env_int("ANDROID_ARRIVAL_STABLE_COUNT", 2)
+    max_wait_s = botconfig.env_float("ANDROID_ARRIVAL_MAX_WAIT_S", botconfig.ANDROID_ARRIVAL_MAX_WAIT_S)
+    interval_s = botconfig.env_float("ANDROID_ARRIVAL_CHECK_INTERVAL_S", botconfig.ANDROID_ARRIVAL_CHECK_INTERVAL_S)
+    stable_need = botconfig.env_int("ANDROID_ARRIVAL_STABLE_COUNT", botconfig.ANDROID_ARRIVAL_STABLE_COUNT)
     deadline = time.time() + max(1.0, max_wait_s)
     stable = 0
     last = None
