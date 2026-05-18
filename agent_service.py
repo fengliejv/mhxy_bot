@@ -1,5 +1,4 @@
 import os
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import botconfig
@@ -7,17 +6,6 @@ import siliflow_client
 
 
 ImageInput = Union[str, bytes, bytearray, memoryview, Any]
-
-
-@dataclass(frozen=True)
-class BaotuParams:
-    qiangdao_name: str
-    location: str
-
-
-@dataclass(frozen=True)
-class WordPuzzleParams:
-    answer_indices: List[int]
 
 
 def _to_png_bytes(image: ImageInput) -> bytes:
@@ -118,8 +106,7 @@ def route_image_intent(image: ImageInput) -> Dict[str, Any]:
         b = r.get("baotu") or {}
         qiangdao_name = str(b.get("qiangdao_name", "") or "").strip()
         location = str(b.get("location", "") or "").strip()
-        params = BaotuParams(qiangdao_name=qiangdao_name, location=location)
-        return {"category": "mhxy_baotu", "params": params.__dict__}
+        return {"category": "mhxy_baotu", "params": {"qiangdao_name": qiangdao_name, "location": location}}
 
     if cat in ("word_puzzle", "puzzle", "idiom"):
         w = r.get("word_puzzle") or {}
@@ -132,9 +119,9 @@ def route_image_intent(image: ImageInput) -> Dict[str, Any]:
                 indices2.append(int(x))
             except Exception:
                 continue
-        params = WordPuzzleParams(answer_indices=indices2[:4])
-        called = solve_word_puzzle_stub(params.answer_indices)
-        return {"category": "word_puzzle", "params": params.__dict__, "called": called, "raw": r.get("_raw")}
+        params = {"answer_indices": indices2[:4]}
+        called = solve_word_puzzle_stub(params["answer_indices"])
+        return {"category": "word_puzzle", "params": params, "called": called, "raw": r.get("_raw")}
 
     return {"category": "other", "params": {}, "called": None, "raw": r.get("_raw")}
 

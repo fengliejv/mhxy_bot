@@ -2,7 +2,7 @@ import time
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import botconfig
-from adb_util import get_adb_client
+import adb_util
 
 
 def _parse_xy(text: str) -> Optional[Tuple[int, int]]:
@@ -56,13 +56,12 @@ def click_word_puzzle_by_indices(answer_indices: Sequence[int], sleep_s: Optiona
     if sleep_s is None:
         sleep_s = botconfig.ANDROID_STEP_SLEEP_S_WORD_PUZZLE
 
-    adb = get_adb_client()
     taps = []
     for idx in indices:
         if idx not in pts:
             continue
         x, y = pts[idx]
-        adb.tap(x, y)
+        adb_util.tap(x, y)
         taps.append({"index": idx, "xy": (x, y)})
         if float(sleep_s) > 0:
             time.sleep(float(sleep_s))

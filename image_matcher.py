@@ -15,183 +15,145 @@ import os
 import sys_util
 
 
+_METHODS = {
+    "auto": None,
+    "ccoeff": cv2.TM_CCOEFF,
+    "ccoeff_normed": cv2.TM_CCOEFF_NORMED,
+    "ccorr": cv2.TM_CCORR,
+    "ccorr_normed": cv2.TM_CCORR_NORMED,
+    "sqdiff": cv2.TM_SQDIFF,
+    "sqdiff_normed": cv2.TM_SQDIFF_NORMED,
+}
 
 
-# 核心类：负责加载图片、执行模板匹配、筛除重复匹配、绘制标记结果
-class TemplateMatcher:
-    def __init__(self, method: str = "auto", threshold: float = 0.8):
-        # 将可读的 method 名称映射到 OpenCV 的模板匹配枚举值
-        self.methods = {
-            "auto": None,
-            "ccoeff": cv2.TM_CCOEFF,
-            "ccoeff_normed": cv2.TM_CCOEFF_NORMED,
-            "ccorr": cv2.TM_CCORR,
-            "ccorr_normed": cv2.TM_CCORR_NORMED,
-            "sqdiff": cv2.TM_SQDIFF,
-            "sqdiff_normed": cv2.TM_SQDIFF_NORMED,
-        }
-        # 记录当前使用的方法名称（也用于后续选择具体 OpenCV method）
-        self.method_name = method
-        # 匹配阈值（越高越严格；sqdiff 类方法会在内部换算）
-        self.threshold = threshold
-    
-    def load_image(self, source: Union[str, np.ndarray, bytes, bytearray, memoryview]) -> Optional[np.ndarray]:
-        if isinstance(source, np.ndarray):
-            return source
-        if isinstance(source, (bytes, bytearray, memoryview)):
-            buf = np.frombuffer(bytes(source), dtype=np.uint8)
-            img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-            if img is None:
-                print("错误: 无法解码图片字节")
-                return None
-            return img
-
-        path = str(source)
-        if not os.path.exists(path):
-            print(f"错误: 图片不存在 - {path}")
-            return None
-        img = cv2.imread(path)
+def load_image(source: Union[str, np.ndarray, bytes, bytearray, memoryview]) -> Optional[np.ndarray]:
+    if isinstance(source, np.ndarray):
+        return source
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        buf = np.frombuffer(bytes(source), dtype=np.uint8)
+        img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if img is None:
-            print(f"错误: 无法读取图片 - {path}")
+            print("错误: 无法解码图片字节")
             return None
         return img
-    
-    def match_template(self, source: np.ndarray, template: np.ndarray) -> Tuple[float, Tuple[int, int]]:
-        # 1) 根据 method_name 选择实际使用的 OpenCV 匹配方法
-        if self.method_name == "auto":
-            method = cv2.TM_CCOEFF_NORMED
-        else:
-            method = self.methods.get(self.method_name, cv2.TM_CCOEFF_NORMED)
-        
-        # 2) 计算模板匹配得分图（result 是二维矩阵，每个像素代表一个候选位置的得分）
-        result = cv2.matchTemplate(source, template, method)
-        
-        # 3) 在得分图中取最小/最大值及其位置（不同方法对应不同“越好”方向）
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-        
-        # 4) 统一输出为“confidence 越大越好”的语义，并确定最佳匹配左上角坐标
+
+    path = str(source)
+    if not os.path.exists(path):
+        print(f"错误: 图片不存在 - {path}")
+        return None
+    img = cv2.imread(path)
+    if img is None:
+        print(f"错误: 无法读取图片 - {path}")
+        return None
+    return img
+
+
+def _resolve_method(method_name: str) -> int:
+    name = str(method_name or "auto").strip().lower()
+    if name == "auto":
+        return cv2.TM_CCOEFF_NORMED
+    return _METHODS.get(name, cv2.TM_CCOEFF_NORMED)
+
+
+def _match_template_best(source: np.ndarray, template: np.ndarray, method_name: str = "auto") -> Tuple[float, Tuple[int, int]]:
+    method = _resolve_method(method_name)
+    result = cv2.matchTemplate(source, template, method)
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+    if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
+        confidence = 1 - min_val
+        top_left = min_loc
+    else:
+        confidence = max_val
+        top_left = max_loc
+    return float(confidence), (int(top_left[0]), int(top_left[1]))
+
+
+def _non_max_suppression(
+    locations: List[Tuple[Tuple[int, int], float]], w: int, h: int, overlap_thresh: float = 0.3
+) -> List[Tuple[Tuple[int, int], float]]:
+    if len(locations) == 0:
+        return []
+
+    locations = sorted(locations, key=lambda x: x[1], reverse=True)
+    pick = []
+    while len(locations) > 0:
+        current = locations[0]
+        pick.append(current)
+        locations = locations[1:]
+
+        remaining = []
+        for loc in locations:
+            pt, conf = loc
+            xx1 = max(current[0][0], pt[0])
+            yy1 = max(current[0][1], pt[1])
+            xx2 = min(current[0][0] + w, pt[0] + w)
+            yy2 = min(current[0][1] + h, pt[1] + h)
+
+            w_intersect = max(0, xx2 - xx1)
+            h_intersect = max(0, yy2 - yy1)
+            overlap = (w_intersect * h_intersect) / (w * h)
+
+            if overlap <= overlap_thresh:
+                remaining.append(loc)
+
+        locations = remaining
+
+    return pick
+
+
+def _match_all_templates(
+    source: np.ndarray, template: np.ndarray, threshold: float, method_name: str = "auto"
+) -> List[Tuple[Tuple[int, int], float]]:
+    method = _resolve_method(method_name)
+    result = cv2.matchTemplate(source, template, method)
+
+    if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
+        threshold_val = 1 - float(threshold)
+        locs = np.where(result <= threshold_val)
+    else:
+        threshold_val = float(threshold)
+        locs = np.where(result >= threshold_val)
+
+    locations = []
+    for pt in zip(*locs[::-1]):
         if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
-            confidence = 1 - min_val
-            top_left = min_loc
+            confidence = 1 - float(result[pt[1], pt[0]])
         else:
-            confidence = max_val
-            top_left = max_loc
-        
-        # 5) 返回最佳匹配的置信度与左上角坐标
-        return confidence, top_left
-    
-    def match_all_templates(self, source: np.ndarray, template: np.ndarray) -> List[Tuple[Tuple[int, int], float]]:
-        # 1) 根据 method_name 选择实际使用的 OpenCV 匹配方法
-        if self.method_name == "auto":
-            method = cv2.TM_CCOEFF_NORMED
-        else:
-            method = self.methods.get(self.method_name, cv2.TM_CCOEFF_NORMED)
-        
-        # 2) 计算模板匹配得分图（二维矩阵）
-        result = cv2.matchTemplate(source, template, method)
-        
-        locations = []
-        # 3) 按方法类型确定“满足阈值的候选点”：
-        #    - sqdiff 类：数值越小越好，因此找 <= (1-threshold)
-        #    - 其他类：数值越大越好，因此找 >= threshold
-        if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
-            threshold_val = 1 - self.threshold
-            locs = np.where(result <= threshold_val)
-        else:
-            threshold_val = self.threshold
-            locs = np.where(result >= threshold_val)
-        
-        # 4) 把所有候选点转成 (左上角坐标, 置信度) 列表
-        for pt in zip(*locs[::-1]):
-            if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
-                confidence = 1 - result[pt[1], pt[0]]
-            else:
-                confidence = result[pt[1], pt[0]]
-            locations.append((pt, confidence))
-        
-        # 5) 非极大值抑制（NMS）：去掉重叠过大的重复框，只保留更“好”的候选
-        locations = self._non_max_suppression(locations, template.shape[1], template.shape[0])
-        
-        # 6) 返回筛选后的匹配结果
-        return locations
-    
-    def _non_max_suppression(self, locations: List[Tuple[Tuple[int, int], float]], 
-                              w: int, h: int, overlap_thresh: float = 0.3) -> List[Tuple[Tuple[int, int], float]]:
-        # 1) 无候选直接返回
-        if len(locations) == 0:
-            return []
-        
-        # 2) 按置信度从高到低排序，优先保留最可信的匹配
-        locations = sorted(locations, key=lambda x: x[1], reverse=True)
-        
-        pick = []
-        
-        # 3) 逐个取出“当前最优”的候选，并剔除与其重叠过大的其它候选
-        while len(locations) > 0:
-            current = locations[0]
-            pick.append(current)
-            locations = locations[1:]
-            
-            remaining = []
-            for loc in locations:
-                pt, conf = loc
-                
-                # 计算两个候选框的交集区域（都假设同模板尺寸 w*h）
-                xx1 = max(current[0][0], pt[0])
-                yy1 = max(current[0][1], pt[1])
-                xx2 = min(current[0][0] + w, pt[0] + w)
-                yy2 = min(current[0][1] + h, pt[1] + h)
-                
-                w_intersect = max(0, xx2 - xx1)
-                h_intersect = max(0, yy2 - yy1)
-                
-                # 用“交集面积 / 模板面积”粗略衡量重叠程度（0~1）
-                overlap = (w_intersect * h_intersect) / (w * h)
-                
-                # 重叠不超过阈值的保留为候选；重叠过大的丢弃（避免重复标框）
-                if overlap <= overlap_thresh:
-                    remaining.append(loc)
-            
-            locations = remaining
-        
-        # 4) 返回保留下来的候选
-        return pick
-    
-    def draw_matches(self, source: np.ndarray, template: np.ndarray, 
-                     locations: List[Tuple[Tuple[int, int], float]]) -> np.ndarray:
-        # 1) 复制一份源图用于绘制（不污染原图）
-        result = source.copy()
-        # 2) 获取模板宽高，用于把“左上角点”还原成矩形框
-        h, w = template.shape[:2]
-        
-        # 3) 遍历所有匹配项，在图上画框并写上置信度
-        for i, (top_left, confidence) in enumerate(locations):
-            bottom_right = (top_left[0] + w, top_left[1] + h)
-            
-            # 画矩形框
-            cv2.rectangle(result, top_left, bottom_right, (0, 255, 0), 2)
-            
-            # 生成文字标签
-            label = f"Match {i+1}: {confidence:.2f}"
-            label_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            
-            # 计算标签背景的位置，尽量显示在框上方
-            label_top = max(top_left[1] - label_size[1] - 5, 0)
-            label_bottom = label_top + label_size[1] + baseline
-            
-            # 画标签背景（绿色底）
-            cv2.rectangle(result, 
-                         (top_left[0], label_top),
-                         (top_left[0] + label_size[0], label_bottom),
-                         (0, 255, 0), -1)
-            
-            # 写标签文字（黑字）
-            cv2.putText(result, label, 
-                       (top_left[0], label_top + label_size[1]),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-        
-        # 4) 返回已标注的结果图
-        return result
+            confidence = float(result[pt[1], pt[0]])
+        locations.append(((int(pt[0]), int(pt[1])), float(confidence)))
+
+    locations = _non_max_suppression(locations, template.shape[1], template.shape[0])
+    return locations
+
+
+def draw_matches(source: np.ndarray, template: np.ndarray, locations: List[Tuple[Tuple[int, int], float]]) -> np.ndarray:
+    result = source.copy()
+    h, w = template.shape[:2]
+    for i, (top_left, confidence) in enumerate(locations):
+        bottom_right = (top_left[0] + w, top_left[1] + h)
+        cv2.rectangle(result, top_left, bottom_right, (0, 255, 0), 2)
+        label = f"Match {i+1}: {confidence:.2f}"
+        label_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        label_top = max(top_left[1] - label_size[1] - 5, 0)
+        label_bottom = label_top + label_size[1] + baseline
+        cv2.rectangle(
+            result,
+            (top_left[0], label_top),
+            (top_left[0] + label_size[0], label_bottom),
+            (0, 255, 0),
+            -1,
+        )
+        cv2.putText(
+            result,
+            label,
+            (top_left[0], label_top + label_size[1]),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 0),
+            1,
+        )
+
+    return result
     
 
 #对外暴露的函数接口，供其他模块调用
@@ -219,16 +181,11 @@ def match_template(
         result_image: 标记后的结果图像，失败时为 None
         locations: 匹配位置列表，每个元素为 ((x, y), confidence)
     """
-    # 1) 创建匹配器（这里强制使用 ccoeff_normed 方法）
-    matcher = TemplateMatcher(method='ccoeff_normed', threshold=threshold)
-    
-    # 2) 加载源图
-    source = matcher.load_image(source_path)
+    source = load_image(source_path)
     if source is None:
         return False, None, []
     
-    # 3) 加载模板图
-    template = matcher.load_image(template_path)
+    template = load_image(template_path)
     if template is None:
         return False, None, []
     
@@ -237,11 +194,10 @@ def match_template(
         print("错误: 模板图片尺寸大于源图片")
         return False, None, []
     
-    # 5) 执行匹配（全部匹配或最佳匹配）
     if find_all:
-        locations = matcher.match_all_templates(source, template)
+        locations = _match_all_templates(source, template, threshold=threshold, method_name="ccoeff_normed")
     else:
-        confidence, top_left = matcher.match_template(source, template)
+        confidence, top_left = _match_template_best(source, template, method_name="ccoeff_normed")
         if confidence >= threshold:
             locations = [(top_left, confidence)]
         else:
@@ -251,8 +207,7 @@ def match_template(
     if len(locations) == 0:
         return False, None, []
     
-    # 7) 在源图上绘制匹配框
-    result_image = matcher.draw_matches(source, template, locations)
+    result_image = draw_matches(source, template, locations)
     
     if output_path is not None:
         out_path = output_path

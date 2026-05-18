@@ -104,6 +104,8 @@ ANDROID_TPL_NPC_DIANXIAOER_1 = "assets/android/npc/dianxiaoer1.png"
 ANDROID_TPL_NPC_DIANXIAOER_2 = "assets/android/npc/dianxiaoer2.png"
 ANDROID_TPL_NPC_DIANXIAOER_3 = "assets/android/npc/dianxiaoer3.png"
 
+JINGWAI_TO_SHITUO = ""
+
 MINERU_CMD = ""
 
 SILICONFLOW_API_KEY = ""

@@ -1,7 +1,7 @@
 from typing import Any, Dict, Sequence
 
 from agent_tools_word_puzzle import click_word_puzzle_by_indices
-from vision_bot import AndroidVisionBot
+import vision_bot
 
 
 # def baotu_task_stub(qiangdao_name: str, location: str) -> Dict[str, Any]:
@@ -12,8 +12,7 @@ def solve_word_puzzle_stub(answer_indices: Sequence[int]) -> Dict[str, Any]:
     result = click_word_puzzle_by_indices(answer_indices)
     
     try:
-        bot = AndroidVisionBot()
-        bot._tap("assets/android/xiaorenwu/confirm.png")
+        vision_bot.tap_template("assets/android/xiaorenwu/confirm.png")
         result["confirm_tapped"] = True
     except Exception as e:
         result["confirm_tapped"] = False
