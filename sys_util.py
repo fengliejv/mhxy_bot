@@ -111,7 +111,7 @@ def save_debug_image(img, name: str) -> None:
             return
 import shutil
 def clear_debug_capture() -> None:
-    debug_dir = "debug_capture"
+    debug_dir = os.path.join(os.getcwd(), "debug_capture")
     if os.path.isdir(debug_dir):
         for f in os.listdir(debug_dir):
             fp = os.path.join(debug_dir, f)

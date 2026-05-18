@@ -34,6 +34,15 @@ def cleanup_desktop() -> Dict[str, Any]:
     )
 
     p_back = vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK) if p_expand is not None else None
+    p_map_button = vision_bot.try_tap_best(
+        [botconfig.ANDROID_TPL_MAP_BUTTON, botconfig.ANDROID_TPL_MAP_BUTTON_2],
+        threshold=botconfig.ANDROID_THR_MAP_BUTTON,
+    )
+    p_map_exit = (
+        vision_bot.try_tap(botconfig.ANDROID_TPL_MAP_EXIT, threshold=botconfig.ANDROID_MATCH_THRESHOLD)
+        if p_map_button is not None
+        else None
+    )
 
     return {
         "tap_close_guide": p_close_guide,
@@ -44,6 +53,8 @@ def cleanup_desktop() -> Dict[str, Any]:
         "tap_hide_ui_disable": p_hide_ui_disable,
         "tap_hide_player_disable": p_hide_player_disable,
         "tap_back": p_back,
+        "tap_map_button": p_map_button,
+        "tap_map_exit": p_map_exit,
     }
 
 
@@ -182,11 +193,12 @@ def go_to_xiaoer(tap_top_right: bool = False) -> Dict[str, Any]:
     }
 
 
-def click_xiaoer() -> Dict[str, Any]:
-    step_1 = go_to_xiaoer(tap_top_right=True)
-    vision_bot.wait_until_arrived_by_coord()
-    step_2 = go_to_xiaoer(tap_top_right=False)
-    return {"ok": bool(step_1.get("ok")) and bool(step_2.get("ok")), "step_1": step_1, "sleep_s": 0.5, "step_2": step_2}
+def click_xiaoer() -> None:
+    # step_1 = go_to_xiaoer(tap_top_right=True)
+    # vision_bot.wait_until_arrived_by_coord()
+    go_to_xiaoer(tap_top_right=False)
+
+
 
 
 def enter_hotel() -> Dict[str, Any]:
@@ -197,31 +209,91 @@ def enter_hotel() -> Dict[str, Any]:
 
 
 def receive_baotu_task() -> Dict[str, Any]:
-    max_retry = 10
-    tap_center = vision_bot.tap_screen_center(sleep_after=1.5)
+    max_retry = 5
     attempts = []
     for i in range(1, max_retry + 1):
-        step = click_xiaoer()
-        img_bgr = vision_bot.screenshot_bgr()
-        best_task = vision_bot.match_once(img_bgr, botconfig.ANDROID_TPL_BAOTU_RECEIVE_TASK, threshold=botconfig.ANDROID_THR_BAOTU_RECEIVE_TASK)
-        if best_task is None:
-            attempts.append({"attempt": i, "step": step, "receive_task": None})
+        close_to_xiaoer()
+        click_xiaoer()
+        receive_task = vision_bot.try_tap_template(
+            template_path=botconfig.ANDROID_TPL_BAOTU_RECEIVE_TASK,
+            threshold=botconfig.ANDROID_THR_BAOTU_RECEIVE_TASK,
+        )
+        if receive_task is None:
+            has_daoju = vision_bot.template_exists(
+                template_path=botconfig.ANDROID_TPL_MENU_DAOJU,
+                threshold=botconfig.ANDROID_MATCH_THRESHOLD,
+            )
+            random_task = None
+            if not has_daoju:
+                random_task = route_image_intent(img_bgr)
+            attempts.append(
+                {
+                    "attempt": i,
+                    "receive_task": None,
+                    "has_daoju_icon": has_daoju,
+                    "random_task": random_task,
+                }
+            )
             continue
-        (top_left, conf) = best_task
-        w, h = vision_bot.get_template_wh(botconfig.ANDROID_TPL_BAOTU_RECEIVE_TASK)
-        cx = int(top_left[0] + w / 2)
-        cy = int(top_left[1] + h / 2)
-        adb_util.tap(cx, cy)
-        time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
+
+        tap_back_after_receive = vision_bot.try_tap(
+            botconfig.ANDROID_TPL_SYSTEM_BACK,
+            threshold=botconfig.ANDROID_THR_SYSTEM_BACK,
+        )
         return {
             "ok": True,
             "attempt": i,
             "tap_center_before_loop": tap_center,
             "step": step,
-            "receive_task": {"template": botconfig.ANDROID_TPL_BAOTU_RECEIVE_TASK, "top_left": top_left, "confidence": float(conf), "tap": (cx, cy)},
+            "receive_task": receive_task,
+            "tap_back_after_receive": tap_back_after_receive,
         }
 
     raise RuntimeError(f"领取宝图任务失败，重试超过{max_retry}次: {attempts}")
+
+def close_to_xiaoer() -> Dict[str, Any]:
+    p_map_button = vision_bot.try_tap_best(
+        [botconfig.ANDROID_TPL_MAP_BUTTON, botconfig.ANDROID_TPL_MAP_BUTTON_2],
+        threshold=botconfig.ANDROID_THR_MAP_BUTTON,
+    )
+    if p_map_button is None:
+        return {"ok": False, "reason": "map_button_not_found"}
+
+    p_search = vision_bot.tap_template(
+        botconfig.ANDROID_TPL_MAP_SEARCH_ICON,
+        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
+    )
+    p_input = vision_bot.tap_template(
+        botconfig.ANDROID_TPL_MAP_INPUT_ICON,
+        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
+    )
+
+    adb_util.ime_set(botconfig.ANDROID_ADB_IME_ID)
+    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
+    adb_util.adbkeyboard_input_text("店小二")
+    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
+    adb_util.ime_set(botconfig.ANDROID_SOGOU_IME_ID)
+    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
+
+    p_on_the_way = vision_bot.tap_template(
+        botconfig.ANDROID_TPL_MAP_ON_THE_WAY,
+        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
+    )
+    p_map_exit = vision_bot.tap_template(
+        botconfig.ANDROID_TPL_MAP_EXIT,
+        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
+    )
+    arrival = vision_bot.wait_until_arrived_by_coord()
+    return {
+        "ok": True,
+        "tap_map_button": p_map_button,
+        "tap_map_search_icon": p_search,
+        "tap_map_input_icon": p_input,
+        "input_text": "店小二",
+        "tap_on_the_way": p_on_the_way,
+        "tap_map_exit": p_map_exit,
+        "arrival": arrival,
+    }
 
 
 def capture_and_extract_baotu_llm() -> Dict[str, Any]:
@@ -268,7 +340,6 @@ def got_baotu_task(judged: Dict[str, Any]) -> bool:
 
 
 def build_qiangdao_plan_after_got_baotu() -> Dict[str, Any]:
-    tap_center = vision_bot.tap_screen_center()
     extracted = capture_and_extract_baotu_llm()
     llm_qiangdao_name = extracted["llm_qiangdao_name"]
     llm_map_name = extracted["llm_map_name"]
@@ -286,11 +357,8 @@ def build_qiangdao_plan_after_got_baotu() -> Dict[str, Any]:
 def excute_datu_once() -> Dict[str, Any]:
     prep = prepare_receive_baotu_task()
     receive = receive_baotu_task()
-    judged = judge_after_receive()["judged"]
-    plan = None
-    if got_baotu_task(judged):
-        plan = build_qiangdao_plan_after_got_baotu()
-    return {"prepare": prep, "receive": receive, "judge": judged, "plan": plan}
+    plan = build_qiangdao_plan_after_got_baotu()
+    return {"prepare": prep, "receive": receive, "plan": plan}
 
 
 def main() -> None:
