@@ -222,23 +222,37 @@ def route_to_huasheng(coord: Tuple[int, int]) -> Dict[str, Any]:
 #     routed["navigate_in_pansi_to_target"] = routed.pop("navigate_in_target")
 #     return routed
 
-# def route_to_donghaiwan(coord: Tuple[int, int]) -> Dict[str, Any]:
-#     routed = _route_via_jingwai_transfer(botconfig.JINGWAI_TO_DONGHAIWAN, coord, strategy="donghaiwan")
-#     if not bool(routed.get("ok")):
-#         return routed
-#     routed["jingwai_to_donghaiwan"] = routed.pop("jingwai_entry_coord")
-#     routed["navigate_jingwai_to_donghaiwan_entry"] = routed.pop("navigate_jingwai_to_entry")
-#     routed["navigate_in_donghaiwan_to_target"] = routed.pop("navigate_in_target")
-#     return routed
+def route_to_donghaiwan(coord: Tuple[int, int]) -> Dict[str, Any]:
+    routed = _route_via_single_transfer(
+        "建邺城",
+        botconfig.JIANYE_TO_DONGHAIWAN,
+        coord,
+        strategy="donghaiwan",
+    )
+    if not bool(routed.get("ok")):
+        return routed
+    routed["fly_to_jianye"] = routed.pop("fly")
+    routed["jianye_to_donghaiwan"] = routed.pop("entry_coord")
+    routed["navigate_jianye_to_donghaiwan_entry"] = routed.pop("navigate_to_entry")
+    routed["tap_transfer_to_donghaiwan"] = routed.pop("tap_transfer")
+    routed["navigate_in_donghaiwan_to_target"] = routed.pop("navigate_in_target")
+    return routed
 
-# def route_to_nver(coord: Tuple[int, int]) -> Dict[str, Any]:
-#     routed = _route_via_jingwai_transfer(botconfig.JINGWAI_TO_NVER, coord, strategy="nver")
-#     if not bool(routed.get("ok")):
-#         return routed
-#     routed["jingwai_to_nver"] = routed.pop("jingwai_entry_coord")
-#     routed["navigate_jingwai_to_nver_entry"] = routed.pop("navigate_jingwai_to_entry")
-#     routed["navigate_in_nver_to_target"] = routed.pop("navigate_in_target")
-#     return routed
+def route_to_nver(coord: Tuple[int, int]) -> Dict[str, Any]:
+    routed = _route_via_single_transfer(
+        "傲来国",
+        botconfig.AOLAI_TO_NVER,
+        coord,
+        strategy="nver",
+    )
+    if not bool(routed.get("ok")):
+        return routed
+    routed["fly_to_aolai"] = routed.pop("fly")
+    routed["aolai_to_nver"] = routed.pop("entry_coord")
+    routed["navigate_aolai_to_nver_entry"] = routed.pop("navigate_to_entry")
+    routed["tap_transfer_to_nver"] = routed.pop("tap_transfer")
+    routed["navigate_in_nver_to_target"] = routed.pop("navigate_in_target")
+    return routed
 
 # def route_to_tiangong(coord: Tuple[int, int]) -> Dict[str, Any]:
 #     routed = _route_via_jingwai_transfer(botconfig.JINGWAI_TO_TIANGONG, coord, strategy="tiangong")
@@ -275,6 +289,16 @@ def route_by_map(map_name: str, coord: Optional[Tuple[int, int]]) -> Dict[str, A
         if coord is None:
             return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
         return route_to_huasheng((int(coord[0]), int(coord[1])))
+
+    if dest in ("东海湾",):
+        if coord is None:
+            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
+        return route_to_donghaiwan((int(coord[0]), int(coord[1])))
+
+    if dest in ("女儿村",):
+        if coord is None:
+            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
+        return route_to_nver((int(coord[0]), int(coord[1])))
 
     if dest in ("建邺城", "长寿村", "朱紫国", "傲来国", "宝象国", "长安城","西梁女国"):
         if coord is None:

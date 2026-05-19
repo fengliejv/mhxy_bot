@@ -194,12 +194,7 @@ def siliconflow_qwen_structured(  # 用 Qwen-VL 做结构化输出：输入图�
     parsed = _try_parse_json(content) if content else None  # 尝试把输出解析为 JSON
     return {"model": model, "content": content, "parsed": parsed, "raw_response": resp}  # 返回统一结构
 
-def paddleocr(image: Union[str, bytes]) -> Dict[str, Any]:
-    result = siliconflow_paddleocr(image)
-      # 调用 PaddleOCR-VL 模型识别
-    return result['content']
-
 
 # sys_util.load_dotenv()
-# result = paddleocr("debug_capture/20260501_195332_detected414_308_474_368.png.png")
+# result = siliconflow_paddleocr("/Users/leefeng/workspace/bmadtest/assets/1.png")
 # print(result)

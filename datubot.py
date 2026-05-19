@@ -6,7 +6,7 @@ import adb_util
 import siliflow_client
 import sys_util
 import vision_bot
-import datubot_strategies
+import route_strategies as datubot_strategies
 from agent_service import extract_baotu_info, route_image_intent
 from image_matcher import match_template
 
@@ -339,14 +339,14 @@ def got_baotu_task(judged: Dict[str, Any]) -> bool:
     return str(judged.get("category", "")).strip().lower() in ("mhxy_baotu", "baotu", "mhxy")
 
 
-def build_qiangdao_plan_after_got_baotu() -> Dict[str, Any]:
+def route_to_target() -> Dict[str, Any]:
     extracted = capture_and_extract_baotu_llm()
     llm_qiangdao_name = extracted["llm_qiangdao_name"]
     llm_map_name = extracted["llm_map_name"]
     llm_coord = extracted["llm_coord"]
+
     qiangdao_plan = datubot_strategies.route_by_map(llm_map_name, llm_coord)
     return {
-        "tap_center_after_got_baotu": tap_center,
         "llm_qiangdao_name": llm_qiangdao_name,
         "llm_map_name": llm_map_name,
         "llm_coord": llm_coord,
@@ -357,8 +357,10 @@ def build_qiangdao_plan_after_got_baotu() -> Dict[str, Any]:
 def excute_datu_once() -> Dict[str, Any]:
     prep = prepare_receive_baotu_task()
     receive = receive_baotu_task()
-    plan = build_qiangdao_plan_after_got_baotu()
-    return {"prepare": prep, "receive": receive, "plan": plan}
+    plan = route_to_target()
+    
+
+    return {"prepare": prep, "receive": receive}
 
 
 def main() -> None:
