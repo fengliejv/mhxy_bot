@@ -231,12 +231,12 @@ def match_template(
 
 def main():
     # 这里是脚本直接运行时的示例入口
-    source_path = "debug_capture/20260514_213620_android_screencap.png"
+    source_path = "debug_capture/20260519_232859_android_screencap.png"
 
     # 调用对外接口执行匹配
     success, _, locations = match_template(
         source_path,
-        template_path="assets/android/system/back.png",
+        template_path="assets/android/map/feixingfuditu/changancheng.png",
         threshold=0.3,
         find_all=True,
         output_path="debug_capture",

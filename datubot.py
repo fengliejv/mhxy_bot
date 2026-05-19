@@ -6,7 +6,7 @@ import adb_util
 import siliflow_client
 import sys_util
 import vision_bot
-import route_strategies as datubot_strategies
+import route_strategies as route_strategies
 from agent_service import extract_baotu_info, route_image_intent
 from image_matcher import match_template
 
@@ -345,7 +345,7 @@ def route_to_target() -> Dict[str, Any]:
     llm_map_name = extracted["llm_map_name"]
     llm_coord = extracted["llm_coord"]
 
-    qiangdao_plan = datubot_strategies.route_by_map(llm_map_name, llm_coord)
+    qiangdao_plan = route_strategies.route_by_map(llm_map_name, llm_coord)
     return {
         "llm_qiangdao_name": llm_qiangdao_name,
         "llm_map_name": llm_map_name,
@@ -366,8 +366,10 @@ def excute_datu_once() -> Dict[str, Any]:
 def main() -> None:
     sys_util.clear_debug_capture()
     botconfig.init()
-    out = excute_datu_once()
-    print(out)
+    # out = excute_datu_once()
+    route_strategies.route_by_map("化生寺", (60,55))
+    # print(plan)
+    # print(out)
 
 
 if __name__ == "__main__":
