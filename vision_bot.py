@@ -1,4 +1,3 @@
-import re
 import time
 from typing import Any, Dict, Optional, Sequence, Tuple
 
@@ -7,6 +6,7 @@ import numpy as np
 
 import botconfig
 import adb_util
+from coord_ocr_util import detect_coord, run_local_ocr
 import operator_util
 import siliflow_client
 import sys_util
@@ -37,6 +37,102 @@ def try_tap_best(template_paths: Sequence[str], threshold: float = 0.8, extra_of
     return {"template": tpl, "top_left": top_left, "confidence": float(matched["confidence"]), "tap": pt}
 
 
+def _normalize_ocr_text(text: str) -> str:
+    return "".join(str(text or "").split())
+
+
+def _image_to_bgr(image: Any) -> np.ndarray:
+    if hasattr(image, "shape") and hasattr(image, "dtype"):
+        return np.asarray(image).copy()
+    if isinstance(image, str):
+        img = cv2.imread(image)
+        if img is None:
+            raise RuntimeError(f"读取图片失败: {image}")
+        return img
+    if isinstance(image, (bytes, bytearray, memoryview)):
+        arr = np.frombuffer(bytes(image), dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise RuntimeError("图片解码失败")
+        return img
+    raise RuntimeError(f"不支持的图片输入类型: {type(image)!r}")
+
+
+def _pick_best_text_match(candidates: Sequence[Dict[str, Any]], keyword: str) -> Optional[Dict[str, Any]]:
+    target = _normalize_ocr_text(keyword)
+    if not target:
+        return None
+    matched = []
+    for item in candidates:
+        text_norm = _normalize_ocr_text(item.get("text", ""))
+        if target in text_norm:
+            matched.append(item)
+    if not matched:
+        return None
+    matched.sort(
+        key=lambda item: (
+            _normalize_ocr_text(item.get("text", "")).startswith(target),
+            len(_normalize_ocr_text(item.get("text", ""))),
+            float(item.get("score", 0.0)),
+        ),
+        reverse=True,
+    )
+    return matched[0]
+
+
+def find_text_by_local_ocr(image: Any, keyword: str) -> Optional[Dict[str, Any]]:
+    resp = run_local_ocr(image, use_det=True, use_cls=False, use_rec=True, log_prefix="[vision_bot]")
+    result = resp.get("result")
+    debug_img = _image_to_bgr(image)
+
+    candidates = []
+    for item in result or []:
+        if not isinstance(item, Sequence) or len(item) < 3:
+            continue
+        box = item[0]
+        text = str(item[1] or "").strip()
+        try:
+            score = float(item[2])
+        except Exception:
+            score = 0.0
+        pts = []
+        for pt in box:
+            if not isinstance(pt, Sequence) or len(pt) < 2:
+                continue
+            pts.append((int(round(float(pt[0]))), int(round(float(pt[1])))))
+        if len(pts) < 4 or not text:
+            continue
+        cx = int(round(sum(x for x, _ in pts) / len(pts)))
+        cy = int(round(sum(y for _, y in pts) / len(pts)))
+        candidates.append({"text": text, "score": score, "box": pts, "center": (cx, cy)})
+
+    print(f"[vision_bot] local_text_ocr texts={[item['text'] for item in candidates]}")
+    best = _pick_best_text_match(candidates, keyword)
+    if best is None:
+        print(f"[vision_bot] local_text_ocr no_match keyword={keyword!r}")
+        return None
+    print(
+        f"[vision_bot] local_text_ocr match keyword={keyword!r} text={best['text']!r} "
+        f"score={best['score']:.3f} center={best['center']}"
+    )
+    debug_draw = debug_img.copy()
+    box = np.asarray(best["box"], dtype=np.int32).reshape((-1, 1, 2))
+    cv2.polylines(debug_draw, [box], isClosed=True, color=(0, 0, 255), thickness=3)
+    cv2.circle(debug_draw, best["center"], radius=6, color=(255, 0, 0), thickness=-1)
+    cv2.putText(
+        debug_draw,
+        best["text"],
+        (best["box"][0][0], max(20, best["box"][0][1] - 8)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 0, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    sys_util.save_debug_image(debug_draw, "local_text_ocr_best_match")
+    return best
+
+
 def navigate_to_coord(x: int, y: int) -> Dict[str, Any]:
     step_sleep_s = botconfig.ANDROID_STEP_SLEEP_S
     thr_map_button = botconfig.ANDROID_THR_MAP_BUTTON
@@ -62,12 +158,11 @@ def navigate_to_coord(x: int, y: int) -> Dict[str, Any]:
         "tap": tap_matched_center(str(matched_map_btn["template"]), matched_map_btn["top_left"]),
     }
 
-    time.sleep(step_sleep_s)
-    p_x = tap_template(tpl_map_x, threshold=thr_map_x)
-
     adb_ime = botconfig.ANDROID_ADB_IME_ID
     sogou_ime = botconfig.ANDROID_SOGOU_IME_ID
     adb_util.ime_set(adb_ime)
+    time.sleep(step_sleep_s)
+    p_x = tap_template(tpl_map_x, threshold=thr_map_x)
     time.sleep(step_sleep_s)
     adb_util.adbkeyboard_input_text(str(int(x)))
     time.sleep(step_sleep_s)
@@ -124,20 +219,6 @@ def _crop_png_bytes(img_bgr: np.ndarray, roi: Tuple[int, int, int, int]) -> byte
     return bytes(buf)
 
 
-def _extract_coord(text: str) -> Optional[Tuple[int, int]]:
-    s = str(text or "").strip()
-    if not s:
-        return None
-    m = re.search(r"(\d{1,3})\s*[,，]\s*(\d{1,3})", s)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    if "(" in s or "（" in s or ")" in s or "）" in s:
-        nums = re.findall(r"\d+", s)
-        if len(nums) >= 2:
-            return int(nums[0]), int(nums[1])
-    return None
-
-
 def detect_coord_by_roi() -> Dict[str, Any]:
     roi_text = botconfig.ANDROID_COORD_ROI
     if not roi_text:
@@ -145,10 +226,8 @@ def detect_coord_by_roi() -> Dict[str, Any]:
     roi = _parse_roi(roi_text, botconfig.KEY_ANDROID_COORD_ROI)
     img_bgr = screenshot_bgr()
     png_bytes = _crop_png_bytes(img_bgr, roi)
-    ocr_result = siliflow_client.siliconflow_paddleocr(png_bytes)
-    raw_text = str(ocr_result.get("content", "")).strip()
-    coord = _extract_coord(raw_text)
-    return {"ok": True, "coord": coord, "raw_text": raw_text, "roi": list(roi), "raw_ocr": ocr_result}
+    detected = detect_coord(png_bytes, save_debug=bool(botconfig.is_debug()))
+    return {"ok": bool(detected.get("ok")), "coord": detected.get("coord"), "roi": list(roi)}
 
 
 def wait_until_arrived_by_coord() -> Dict[str, Any]:

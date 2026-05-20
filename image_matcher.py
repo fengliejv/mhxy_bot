@@ -48,6 +48,46 @@ def load_image(source: Union[str, np.ndarray, bytes, bytearray, memoryview]) -> 
     return img
 
 
+def print_clicked_pixel_coord(image: Union[str, np.ndarray, bytes, bytearray, memoryview], window_name: str = "Click Image") -> None:
+    img = load_image(image)
+    if img is None:
+        raise RuntimeError("无法加载图片，不能进行点击取点")
+
+    base = img.copy()
+    view = img.copy()
+
+    def _on_mouse(event, x, y, flags, param):
+        nonlocal view
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        px = int(x)
+        py = int(y)
+        print(f"clicked_pixel_coord=({px}, {py})")
+        view = base.copy()
+        cv2.drawMarker(view, (px, py), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=24, thickness=2)
+        cv2.putText(
+            view,
+            f"({px}, {py})",
+            (px + 10, max(20, py - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 255),
+            2,
+        )
+
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback(window_name, _on_mouse)
+    print("左键点击图片可打印像素坐标，左上角为原点；按 q 或 Esc 退出。")
+    try:
+        while True:
+            cv2.imshow(window_name, view)
+            key = cv2.waitKey(20) & 0xFF
+            if key in (27, ord("q")):
+                break
+    finally:
+        cv2.destroyWindow(window_name)
+
+
 def _resolve_method(method_name: str) -> int:
     name = str(method_name or "auto").strip().lower()
     if name == "auto":
@@ -250,4 +290,5 @@ def main():
 
 if __name__ == "__main__":
     # 直接运行该文件时执行 main()
-    main()
+    print_clicked_pixel_coord("qizi.png")
+    # main()

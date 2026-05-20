@@ -3,15 +3,17 @@ from typing import Any, Dict, Optional, Tuple
 
 import botconfig
 import adb_util
-import siliflow_client
 import sys_util
 import vision_bot
 import route_strategies as route_strategies
 from agent_service import extract_baotu_info, route_image_intent
-from image_matcher import match_template
 
 
-def cleanup_desktop() -> Dict[str, Any]:
+def _print_step(name: str, detail: str) -> None:
+    print(f"[datubot] {name}: {detail}")
+
+
+def cleanup_desktop() -> None:
     p_close_guide = vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_CLOSE_GUIDE, threshold=botconfig.ANDROID_THR_SYSTEM_CLOSE_GUIDE)
     p_close_task = vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_CLOSE_TASK, threshold=botconfig.ANDROID_THR_SYSTEM_CLOSE_TASK)
     p_hide_dialog = vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_HIDE_DIALOG, threshold=botconfig.ANDROID_THR_SYSTEM_HIDE_DIALOG)
@@ -43,23 +45,24 @@ def cleanup_desktop() -> Dict[str, Any]:
         if p_map_button is not None
         else None
     )
+    tapped = [
+        ("close_guide", p_close_guide),
+        ("close_task", p_close_task),
+        ("hide_dialog", p_hide_dialog),
+        ("auto_attack_shrink", p_auto_attack_shrink),
+        ("expand", p_expand),
+        ("hide_ui_disable", p_hide_ui_disable),
+        ("hide_player_disable", p_hide_player_disable),
+        ("back", p_back),
+        ("map_button", p_map_button),
+        ("map_exit", p_map_exit),
+    ]
+    tapped_names = [name for name, value in tapped if value is not None]
+    _print_step("cleanup_desktop", f"tapped={tapped_names}")
 
-    return {
-        "tap_close_guide": p_close_guide,
-        "tap_close_task": p_close_task,
-        "tap_hide_dialog": p_hide_dialog,
-        "tap_auto_attack_shrink": p_auto_attack_shrink,
-        "tap_expand": p_expand,
-        "tap_hide_ui_disable": p_hide_ui_disable,
-        "tap_hide_player_disable": p_hide_player_disable,
-        "tap_back": p_back,
-        "tap_map_button": p_map_button,
-        "tap_map_exit": p_map_exit,
-    }
 
-
-def talk_to_dianxiaoer() -> Dict[str, Any]:
-    cleanup = cleanup_desktop()
+def talk_to_dianxiaoer() -> None:
+    cleanup_desktop()
     img_bgr = vision_bot.screenshot_bgr()
     matched = vision_bot.match_best_of_templates(
         img_bgr,
@@ -67,7 +70,7 @@ def talk_to_dianxiaoer() -> Dict[str, Any]:
         threshold=0.5,
     )
     if matched is None:
-        return {"ok": False, "reason": "npc_not_found", "cleanup": cleanup}
+        raise RuntimeError("店小二模板匹配失败")
 
     tpl = str(matched["template"])
     top_left = matched["top_left"]
@@ -84,69 +87,28 @@ def talk_to_dianxiaoer() -> Dict[str, Any]:
     time.sleep(2.0)
     adb_util.tap(x_center, y_center)
     time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
-    return {
-        "ok": True,
-        "cleanup": cleanup,
-        "template": tpl,
-        "confidence": conf,
-        "tap_edge": (x_edge, y_edge),
-        "tap_center": (x_center, y_center),
-    }
-
-
-def fly_to_hotel() -> Dict[str, Any]:
-    p_menu_daoju = vision_bot.tap_template(botconfig.ANDROID_TPL_MENU_DAOJU, threshold=botconfig.ANDROID_THR_MENU_DAOJU)
-    p_changan_flag = vision_bot.tap_template(botconfig.ANDROID_TPL_PROP_CHANGAN_FLAG, threshold=botconfig.ANDROID_THR_PROP_CHANGAN_FLAG)
-    p_use = vision_bot.tap_template(botconfig.ANDROID_TPL_PROP_USE, threshold=botconfig.ANDROID_THR_PROP_USE)
-
-    target_x = botconfig.ANDROID_TELEPORT_TARGET_X
-    target_y = botconfig.ANDROID_TELEPORT_TARGET_Y
-
-    img_bgr = vision_bot.screenshot_bgr()
-    ok, _, locations = match_template(
-        img_bgr,
-        botconfig.ANDROID_TPL_MAP_TELEPORT_POINT,
-        threshold=botconfig.ANDROID_THR_MAP_TELEPORT_POINT,
-        find_all=True,
+    _print_step(
+        "talk_to_dianxiaoer",
+        f"template={tpl} confidence={conf:.3f} tap_edge={(x_edge, y_edge)} tap_center={(x_center, y_center)}",
     )
-    if not ok or not locations:
-        return {
-            "ok": False,
-            "reason": "teleport_point_not_found",
-            "tap_menu_daoju": p_menu_daoju,
-            "tap_changan_flag": p_changan_flag,
-            "tap_use": p_use,
-        }
 
-    tpl_w, tpl_h = vision_bot.get_template_wh(botconfig.ANDROID_TPL_MAP_TELEPORT_POINT)
-    best = None
-    for (top_left, conf) in locations:
-        cx = int(top_left[0] + tpl_w / 2)
-        cy = int(top_left[1] + tpl_h / 2)
-        dx = cx - target_x
-        dy = cy - target_y
-        dist2 = dx * dx + dy * dy
-        item = {"top_left": top_left, "confidence": float(conf), "center": (cx, cy), "dist2": int(dist2)}
-        if best is None or item["dist2"] < best["dist2"]:
-            best = item
 
-    adb_util.tap(best["center"][0], best["center"][1])
+def fly_to_hotel() -> None:
+    hotel_target = botconfig._parse_xy(botconfig.CHANGAN_FLY_JIUDIAN)
+    routed = route_strategies.use_changan_flag_and_tap_nearest(hotel_target)
+    if not bool(routed.get("ok")):
+        raise RuntimeError("客栈传送点模板匹配失败")
     time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
-
-    return {
-        "ok": True,
-        "tap_menu_daoju": p_menu_daoju,
-        "tap_changan_flag": p_changan_flag,
-        "tap_use": p_use,
-        "target": (target_x, target_y),
-        "teleport_point_best": best,
-        "tap_teleport": tuple(best["center"]),
-        "teleport_point_count": int(len(locations)),
-    }
+    best = routed["teleport_point_best"]
+    _print_step(
+        "fly_to_hotel",
+        f"target={(hotel_target)} selected_center={tuple(best['center'])} "
+        f"confidence={best['confidence']:.3f} candidates={routed['teleport_point_count']}",
+    )
 
 
-def go_to_xiaoer(tap_top_right: bool = False) -> Dict[str, Any]:
-    p_expand = vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
+def go_to_xiaoer(tap_top_right: bool = False) -> None:
+    vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
 
     img_bgr = vision_bot.screenshot_bgr()
     matched = vision_bot.match_first_of_templates(
@@ -156,7 +118,7 @@ def go_to_xiaoer(tap_top_right: bool = False) -> Dict[str, Any]:
     )
     if matched is None:
         vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
-        return {"ok": False, "reason": "npc_not_found", "tap_expand": p_expand}
+        raise RuntimeError("店小二模板匹配失败")
 
     tpl = str(matched["template"])
     top_left = matched["top_left"]
@@ -178,19 +140,12 @@ def go_to_xiaoer(tap_top_right: bool = False) -> Dict[str, Any]:
         adb_util.tap(cx, cy)
         tap_center = (cx, cy)
 
-    p_back = vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
-
-    return {
-        "ok": True,
-        "tap_expand": p_expand,
-        "template": tpl,
-        "confidence": conf,
-        "top_left": top_left,
-        "tap_pos": "top_right" if tap_top_right else "center",
-        "tap_center": tap_center,
-        "tap_top_right": tap_top_right_pt,
-        "tap_back": p_back,
-    }
+    vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
+    _print_step(
+        "go_to_xiaoer",
+        f"template={tpl} confidence={conf:.3f} tap_pos={'top_right' if tap_top_right else 'center'} "
+        f"tap={tap_top_right_pt or tap_center}",
+    )
 
 
 def click_xiaoer() -> None:
@@ -201,17 +156,18 @@ def click_xiaoer() -> None:
 
 
 
-def enter_hotel() -> Dict[str, Any]:
-    p_expand = vision_bot.tap_template(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
-    p_hotel_door = vision_bot.tap_template(botconfig.ANDROID_TPL_CHANGAN_HOTEL_DOOR, threshold=botconfig.ANDROID_THR_CHANGAN_HOTEL_DOOR)
-    p_back = vision_bot.tap_template(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
-    return {"ok": True, "tap_expand": p_expand, "tap_hotel_door": p_hotel_door, "tap_back": p_back}
+def enter_hotel() -> None:
+    vision_bot.tap_template(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
+    vision_bot.tap_template(botconfig.ANDROID_TPL_CHANGAN_HOTEL_DOOR, threshold=botconfig.ANDROID_THR_CHANGAN_HOTEL_DOOR)
+    vision_bot.tap_template(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
+    _print_step("enter_hotel", "entered")
 
 
-def receive_baotu_task() -> Dict[str, Any]:
+def receive_baotu_task() -> None:
     max_retry = 5
-    attempts = []
+    attempt_notes = []
     for i in range(1, max_retry + 1):
+        _print_step("receive_baotu_task", f"attempt={i} start")
         close_to_xiaoer()
         click_xiaoer()
         receive_task = vision_bot.try_tap_template(
@@ -223,47 +179,38 @@ def receive_baotu_task() -> Dict[str, Any]:
                 template_path=botconfig.ANDROID_TPL_MENU_DAOJU,
                 threshold=botconfig.ANDROID_MATCH_THRESHOLD,
             )
-            random_task = None
+            note = f"attempt={i} receive_task_missing has_daoju_icon={has_daoju}"
             if not has_daoju:
+                img_bgr = vision_bot.screenshot_bgr()
                 random_task = route_image_intent(img_bgr)
-            attempts.append(
-                {
-                    "attempt": i,
-                    "receive_task": None,
-                    "has_daoju_icon": has_daoju,
-                    "random_task": random_task,
-                }
-            )
+                note = f"{note} random_task={random_task}"
+            _print_step("receive_baotu_task", note)
+            attempt_notes.append(note)
             continue
 
-        tap_back_after_receive = vision_bot.try_tap(
+        vision_bot.try_tap(
             botconfig.ANDROID_TPL_SYSTEM_BACK,
             threshold=botconfig.ANDROID_THR_SYSTEM_BACK,
         )
-        return {
-            "ok": True,
-            "attempt": i,
-            "tap_center_before_loop": tap_center,
-            "step": step,
-            "receive_task": receive_task,
-            "tap_back_after_receive": tap_back_after_receive,
-        }
+        _print_step("receive_baotu_task", f"attempt={i} success tap={receive_task.get('tap')}")
+        return None
 
-    raise RuntimeError(f"领取宝图任务失败，重试超过{max_retry}次: {attempts}")
+    raise RuntimeError(f"领取宝图任务失败，重试超过{max_retry}次: {attempt_notes}")
 
-def close_to_xiaoer() -> Dict[str, Any]:
+
+def close_to_xiaoer() -> None:
     p_map_button = vision_bot.try_tap_best(
         [botconfig.ANDROID_TPL_MAP_BUTTON, botconfig.ANDROID_TPL_MAP_BUTTON_2],
         threshold=botconfig.ANDROID_THR_MAP_BUTTON,
     )
     if p_map_button is None:
-        return {"ok": False, "reason": "map_button_not_found"}
+        raise RuntimeError("地图按钮模板匹配失败")
 
-    p_search = vision_bot.tap_template(
+    vision_bot.tap_template(
         botconfig.ANDROID_TPL_MAP_SEARCH_ICON,
         threshold=botconfig.ANDROID_MATCH_THRESHOLD,
     )
-    p_input = vision_bot.tap_template(
+    vision_bot.tap_template(
         botconfig.ANDROID_TPL_MAP_INPUT_ICON,
         threshold=botconfig.ANDROID_MATCH_THRESHOLD,
     )
@@ -275,28 +222,24 @@ def close_to_xiaoer() -> Dict[str, Any]:
     adb_util.ime_set(botconfig.ANDROID_SOGOU_IME_ID)
     time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
 
-    p_on_the_way = vision_bot.tap_template(
+    vision_bot.tap_template(
         botconfig.ANDROID_TPL_MAP_ON_THE_WAY,
         threshold=botconfig.ANDROID_MATCH_THRESHOLD,
     )
-    p_map_exit = vision_bot.tap_template(
+    vision_bot.tap_template(
         botconfig.ANDROID_TPL_MAP_EXIT,
         threshold=botconfig.ANDROID_MATCH_THRESHOLD,
     )
     arrival = vision_bot.wait_until_arrived_by_coord()
-    return {
-        "ok": True,
-        "tap_map_button": p_map_button,
-        "tap_map_search_icon": p_search,
-        "tap_map_input_icon": p_input,
-        "input_text": "店小二",
-        "tap_on_the_way": p_on_the_way,
-        "tap_map_exit": p_map_exit,
-        "arrival": arrival,
-    }
+    _print_step(
+        "close_to_xiaoer",
+        f"target=店小二 arrived={bool(arrival.get('arrived'))} coord={arrival.get('coord')} samples={arrival.get('samples')}",
+    )
+    if not bool(arrival.get("arrived")):
+        raise RuntimeError(f"前往店小二失败: {arrival}")
 
 
-def capture_and_extract_baotu_llm() -> Dict[str, Any]:
+def capture_and_extract_baotu_llm() -> Tuple[str, str, Optional[Tuple[int, int]]]:
     img_bgr = vision_bot.screenshot_bgr()
     llm_baotu_info = extract_baotu_info(img_bgr)
     llm_parsed = llm_baotu_info.get("parsed") if isinstance(llm_baotu_info, dict) else None
@@ -312,62 +255,65 @@ def capture_and_extract_baotu_llm() -> Dict[str, Any]:
                 llm_coord = (int(coord_list[0]), int(coord_list[1]))
             except Exception:
                 llm_coord = None
-    return {
-        "llm_baotu_info": llm_baotu_info,
-        "llm_parsed": llm_parsed,
-        "llm_qiangdao_name": llm_qiangdao_name,
-        "llm_map_name": llm_map_name,
-        "llm_coord": llm_coord,
-    }
+    _print_step(
+        "capture_and_extract_baotu_llm",
+        f"qiangdao_name={llm_qiangdao_name} map_name={llm_map_name} coord={llm_coord}",
+    )
+    return llm_qiangdao_name, llm_map_name, llm_coord
 
 
-def prepare_receive_baotu_task() -> Dict[str, Any]:
-    cleanup = cleanup_desktop()
-    fly = fly_to_hotel()
-    enter = enter_hotel()
-    return {"cleanup": cleanup, "fly_to_hotel": fly, "enter_hotel": enter}
+def prepare_receive_baotu_task() -> None:
+    cleanup_desktop()
+    fly_to_hotel()
+    enter_hotel()
+    _print_step("prepare_receive_baotu_task", "done")
 
 
 def judge_after_receive() -> Dict[str, Any]:
     time.sleep(max(0.5, float(botconfig.ANDROID_STEP_SLEEP_S)))
     img_bgr = vision_bot.screenshot_bgr()
     judged = route_image_intent(img_bgr)
-    return {"judged": judged}
+    _print_step("judge_after_receive", str(judged))
+    return judged
 
 
 def got_baotu_task(judged: Dict[str, Any]) -> bool:
     return str(judged.get("category", "")).strip().lower() in ("mhxy_baotu", "baotu", "mhxy")
 
 
-def route_to_target() -> Dict[str, Any]:
-    extracted = capture_and_extract_baotu_llm()
-    llm_qiangdao_name = extracted["llm_qiangdao_name"]
-    llm_map_name = extracted["llm_map_name"]
-    llm_coord = extracted["llm_coord"]
+def route_to_target(llm_map_name: str, llm_coord: Optional[Tuple[int, int]]) -> Dict[str, Any]:
+    plan = route_strategies.route_by_map(llm_map_name, llm_coord)
+    _print_step(
+        "route_to_target",
+        f"map_name={llm_map_name} coord={llm_coord} "
+        f"ok={plan.get('ok')} reason={plan.get('reason')}",
+    )
+    if not bool(plan.get("ok")):
+        raise RuntimeError(f"前往目标失败: {plan}")
+    return plan
 
-    qiangdao_plan = route_strategies.route_by_map(llm_map_name, llm_coord)
-    return {
-        "llm_qiangdao_name": llm_qiangdao_name,
-        "llm_map_name": llm_map_name,
-        "llm_coord": llm_coord,
-        "qiangdao_plan": qiangdao_plan,
-    }
+def attack_target(llm_qiangdao_name: str) -> None:
+
+    pass
+
 
 
 def excute_datu_once() -> Dict[str, Any]:
-    prep = prepare_receive_baotu_task()
-    receive = receive_baotu_task()
-    plan = route_to_target()
-    
-
-    return {"prepare": prep, "receive": receive}
+    prepare_receive_baotu_task()
+    receive_baotu_task()
+    llm_qiangdao_name, llm_map_name, llm_coord = capture_and_extract_baotu_llm()
+    route_to_target(llm_map_name, llm_coord)
+    attack_target(llm_qiangdao_name)
+    return None
 
 
 def main() -> None:
     sys_util.clear_debug_capture()
     botconfig.init()
+    matched = vision_bot.find_text_by_local_ocr("qiangdao.png", "强盗")
+    print(matched)
     # out = excute_datu_once()
-    route_strategies.route_by_map("化生寺", (60,55))
+    # route_strategies.route_by_map("化生寺", (60,55))
     # print(plan)
     # print(out)
 
