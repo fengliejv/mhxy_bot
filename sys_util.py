@@ -91,11 +91,6 @@ def _debug_worker_loop() -> None:
             except Exception:
                 pass
 
-
-def load_dotenv(path: str = ".env") -> None:
-    botconfig.init(path)
-
-
 def save_debug_image(img, name: str) -> None:
         is_debug = bool(botconfig.is_debug())
         if not is_debug:

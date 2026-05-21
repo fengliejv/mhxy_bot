@@ -13,19 +13,6 @@ _ADB_PATH: Optional[str] = None
 _ADB_SERIAL: Optional[str] = None
 
 
-def _adb_escape_text(text: str) -> str:
-    s = str(text)
-    s = s.replace(" ", "%s")
-    escaped = []
-    special = set("&|;<>()$`\\\"'*?![]{}")
-    for ch in s:
-        if ch in special:
-            escaped.append("\\" + ch)
-        else:
-            escaped.append(ch)
-    return "".join(escaped)
-
-
 def _auto_pick_serial(adb_path: str) -> Optional[str]:
     try:
         subprocess.run([adb_path, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10.0)
@@ -106,11 +93,21 @@ def _run(args: Sequence[str], timeout_s: float = 15.0) -> subprocess.CompletedPr
     return cp
 
 
+def _stderr_text(cp: subprocess.CompletedProcess) -> str:
+    return (cp.stderr or b"").decode("utf-8", errors="replace")
+
+
+def _run_checked(args: Sequence[str], action: str, timeout_s: float = 15.0) -> subprocess.CompletedProcess:
+    cp = _run(args, timeout_s=timeout_s)
+    if cp.returncode != 0:
+        raise RuntimeError(f"{action} 失败: rc={cp.returncode} {_stderr_text(cp)}".strip())
+    return cp
+
+
 def screenshot_png() -> bytes:
-    cp = _run(["exec-out", "screencap", "-p"], timeout_s=30.0)
-    if cp.returncode != 0 or not cp.stdout:
-        err = (cp.stderr or b"").decode("utf-8", errors="replace")
-        raise RuntimeError(f"adb screencap 失败: rc={cp.returncode} {err}".strip())
+    cp = _run_checked(["exec-out", "screencap", "-p"], "adb screencap", timeout_s=30.0)
+    if not cp.stdout:
+        raise RuntimeError("adb screencap 失败: 空输出")
     data = cp.stdout
     sig = b"\x89PNG\r\n\x1a\n"
     if not data.startswith(sig):
@@ -149,81 +146,22 @@ def tap(x: int, y: int) -> None:
         return
     cp2 = _run(["shell", "input", "swipe", x, y, x, y, "80"], timeout_s=10.0)
     if cp2.returncode != 0:
-        err = (cp2.stderr or cp.stderr or b"").decode("utf-8", errors="replace")
+        err = _stderr_text(cp2) or _stderr_text(cp)
         raise RuntimeError(f"adb tap 失败: rc={cp2.returncode} {err}".strip())
 
 
 def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
     args = ["shell", "input", "swipe", str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)), str(int(duration_ms))]
-    cp = _run(args, timeout_s=15.0)
-    if cp.returncode != 0:
-        err = (cp.stderr or b"").decode("utf-8", errors="replace")
-        raise RuntimeError(f"adb swipe 失败: rc={cp.returncode} {err}".strip())
-
-
-def keyevent(keycode: int) -> None:
-    cp = _run(["shell", "input", "keyevent", str(int(keycode))], timeout_s=10.0)
-    if cp.returncode != 0:
-        err = (cp.stderr or b"").decode("utf-8", errors="replace")
-        raise RuntimeError(f"adb keyevent 失败: rc={cp.returncode} {err}".strip())
-
-
-def input_text(text: str) -> None:
-    payload = _adb_escape_text(text)
-    cp = _run(["shell", "input", "text", payload], timeout_s=15.0)
-    if cp.returncode != 0:
-        err = (cp.stderr or b"").decode("utf-8", errors="replace")
-        raise RuntimeError(f"adb input text 失败: rc={cp.returncode} {err}".strip())
+    _run_checked(args, "adb swipe", timeout_s=15.0)
 
 
 def ime_set(ime_id: str) -> None:
     ime_id = str(ime_id or "").strip()
     if not ime_id:
         raise ValueError("ime_id 不能为空")
-    cp = _run(["shell", "ime", "set", ime_id], timeout_s=15.0)
-    if cp.returncode != 0:
-        err = (cp.stderr or b"").decode("utf-8", errors="replace")
-        raise RuntimeError(f"adb ime set 失败: rc={cp.returncode} {err}".strip())
+    _run_checked(["shell", "ime", "set", ime_id], "adb ime set", timeout_s=15.0)
 
 
 def adbkeyboard_input_text(text: str) -> None:
     msg = str(text)
-    cp = _run(["shell", "am", "broadcast", "-a", "ADB_INPUT_TEXT", "--es", "msg", msg], timeout_s=15.0)
-    if cp.returncode != 0:
-        err = (cp.stderr or b"").decode("utf-8", errors="replace")
-        raise RuntimeError(f"adbkeyboard 输入失败: rc={cp.returncode} {err}".strip())
-
-
-def start_app(package: str, activity: str) -> None:
-    cp = _run(["shell", "am", "start", "-n", f"{package}/{activity}"], timeout_s=20.0)
-    if cp.returncode != 0:
-        err = (cp.stderr or b"").decode("utf-8", errors="replace")
-        raise RuntimeError(f"adb start app 失败: rc={cp.returncode} {err}".strip())
-
-
-def force_stop(package: str) -> None:
-    pkg = str(package or "").strip()
-    if not pkg:
-        raise ValueError("package 不能为空")
-    cp = _run(["shell", "am", "force-stop", pkg], timeout_s=20.0)
-    if cp.returncode != 0:
-        err = (cp.stderr or b"").decode("utf-8", errors="replace")
-        raise RuntimeError(f"adb force-stop 失败: rc={cp.returncode} {err}".strip())
-
-
-def shell(cmd: str, timeout_s: float = 20.0) -> str:
-    s = str(cmd or "").strip()
-    if not s:
-        return ""
-    cp = _run(["shell", "sh", "-c", s], timeout_s=float(timeout_s))
-    out = (cp.stdout or b"").decode("utf-8", errors="replace")
-    return out
-
-
-def pidof(package: str) -> Optional[int]:
-    pkg = str(package or "").strip()
-    if not pkg:
-        return None
-    out = shell(f"pidof {pkg} 2>/dev/null || true", timeout_s=10.0).strip()
-    nums = [x for x in out.split() if x.strip().isdigit()]
-    return int(nums[0]) if nums else None
+    _run_checked(["shell", "am", "broadcast", "-a", "ADB_INPUT_TEXT", "--es", "msg", msg], "adbkeyboard 输入", timeout_s=15.0)
