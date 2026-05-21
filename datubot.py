@@ -221,8 +221,7 @@ def capture_and_extract_baotu_llm() -> Tuple[str, str, Optional[Tuple[int, int]]
     return llm_qiangdao_name, llm_map_name, llm_coord
 
 
-def prepare_receive_baotu_task() -> None:
-    cleanup_desktop()
+def goto_changan_jiudian() -> None:
     fly_to_hotel()
     enter_hotel()
     _print_step("prepare_receive_baotu_task", "done")
@@ -293,7 +292,8 @@ def fighting() -> None:
     _print_step("fighting", f"reached_max_rounds={max_rounds}")
 
 def excute_datu_once() -> None:
-    prepare_receive_baotu_task()
+    cleanup_desktop()
+    goto_changan_jiudian()
     receive_baotu_task()
     llm_qiangdao_name, llm_map_name, llm_coord = capture_and_extract_baotu_llm()
     route_to_target(llm_map_name, llm_coord)
