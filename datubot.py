@@ -1,6 +1,6 @@
 import re
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import botconfig
 import adb_util
@@ -9,26 +9,12 @@ import sys_util
 import vision_bot
 import route_strategies as route_strategies
 from agent_service import extract_baotu_info, route_image_intent
-from local_ocr_util import run_local_ocr
+from local_ocr_util import flatten_ocr_text, run_local_ocr
+from roi_util import parse_roi
 
 
 def _print_step(name: str, detail: str) -> None:
     print(f"[datubot] {name}: {detail}")
-
-
-def _flatten_ocr_text(result: Any) -> str:
-    if not result:
-        return ""
-    parts = []
-    for item in result:
-        if not isinstance(item, (list, tuple)) or not item:
-            continue
-        if isinstance(item[0], str):
-            parts.append(str(item[0]))
-            continue
-        if len(item) >= 2 and isinstance(item[1], str):
-            parts.append(str(item[1]))
-    return "".join(parts).strip()
 
 
 def _detect_battle_timer_text() -> str:
@@ -36,11 +22,11 @@ def _detect_battle_timer_text() -> str:
     if not roi_text:
         raise RuntimeError(f"缺少 {botconfig.KEY_BATTLE_CALCULATION_ROI}，请在 .env 配置，例如 100,100,200,200")
 
-    x1, y1, x2, y2 = vision_bot._parse_roi(roi_text, botconfig.KEY_BATTLE_CALCULATION_ROI)
+    x1, y1, x2, y2 = parse_roi(roi_text, botconfig.KEY_BATTLE_CALCULATION_ROI)
     img_bgr = vision_bot.screenshot_bgr()
     cropped = img_bgr[y1:y2, x1:x2]
     ocr_result = run_local_ocr(cropped, use_det=False, use_cls=False, use_rec=True, log_prefix="[datubot]")
-    raw_text = _flatten_ocr_text(ocr_result.get("result"))
+    raw_text = flatten_ocr_text(ocr_result.get("result"))
     _print_step("battle_timer_ocr", f"roi={[x1, y1, x2, y2]} raw_text={raw_text!r}")
     return raw_text
 
@@ -99,15 +85,10 @@ def fly_to_hotel() -> None:
     if not bool(routed.get("ok")):
         raise RuntimeError("客栈传送点模板匹配失败")
     time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
-    best = routed["teleport_point_best"]
-    _print_step(
-        "fly_to_hotel",
-        f"target={(hotel_target)} selected_center={tuple(best['center'])} "
-        f"confidence={best['confidence']:.3f} candidates={routed['teleport_point_count']}",
-    )
+    _print_step("fly_to_hotel", f"target={hotel_target}")
 
 
-def go_to_xiaoer(tap_top_right: bool = False) -> None:
+def go_to_xiaoer() -> None:
     vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
 
     img_bgr = vision_bot.screenshot_bgr()
@@ -124,36 +105,14 @@ def go_to_xiaoer(tap_top_right: bool = False) -> None:
     top_left = matched["top_left"]
     conf = float(matched["confidence"])
     w, h = vision_bot.get_template_wh(tpl)
-
-    tap_center = None
-    tap_top_right_pt = None
-    if tap_top_right:
-        margin = max(5, int(min(w, h) * 0.15))
-        margin = min(margin, max(1, w - 1), max(1, h - 1))
-        x = int(top_left[0] + w - margin)
-        y = int(top_left[1] + margin)
-        adb_util.tap(x + 10, y + 10)
-        tap_top_right_pt = (x, y)
-    else:
-        cx = int(top_left[0] + w / 2)
-        cy = int(top_left[1] + h / 2)
-        adb_util.tap(cx, cy)
-        tap_center = (cx, cy)
+    tap_center = (int(top_left[0] + w / 2), int(top_left[1] + h / 2))
+    adb_util.tap(tap_center[0], tap_center[1])
 
     vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
     _print_step(
         "go_to_xiaoer",
-        f"template={tpl} confidence={conf:.3f} tap_pos={'top_right' if tap_top_right else 'center'} "
-        f"tap={tap_top_right_pt or tap_center}",
+        f"template={tpl} confidence={conf:.3f} tap={tap_center}",
     )
-
-
-def click_xiaoer() -> None:
-    # step_1 = go_to_xiaoer(tap_top_right=True)
-    # vision_bot.wait_until_arrived_by_coord()
-    go_to_xiaoer(tap_top_right=False)
-
-
 
 
 def enter_hotel() -> None:
@@ -169,7 +128,7 @@ def receive_baotu_task() -> None:
     for i in range(1, max_retry + 1):
         _print_step("receive_baotu_task", f"attempt={i} start")
         close_to_xiaoer()
-        click_xiaoer()
+        go_to_xiaoer()
         receive_task = vision_bot.try_tap_template(
             template_path=botconfig.ANDROID_TPL_BAOTU_RECEIVE_TASK,
             threshold=botconfig.ANDROID_THR_BAOTU_RECEIVE_TASK,
@@ -268,7 +227,7 @@ def prepare_receive_baotu_task() -> None:
     enter_hotel()
     _print_step("prepare_receive_baotu_task", "done")
 
-def route_to_target(llm_map_name: str, llm_coord: Optional[Tuple[int, int]]) -> Dict[str, Any]:
+def route_to_target(llm_map_name: str, llm_coord: Optional[Tuple[int, int]]) -> None:
     plan = route_strategies.route_by_map(llm_map_name, llm_coord)
     _print_step(
         "route_to_target",
@@ -277,7 +236,6 @@ def route_to_target(llm_map_name: str, llm_coord: Optional[Tuple[int, int]]) -> 
     )
     if not bool(plan.get("ok")):
         raise RuntimeError(f"前往目标失败: {plan}")
-    return plan
 
 def attack_target_with_name(name: str) -> None:
     name = str(name or "").strip()
@@ -334,21 +292,22 @@ def fighting() -> None:
 
     _print_step("fighting", f"reached_max_rounds={max_rounds}")
 
-def excute_datu_once() -> Dict[str, Any]:
+def excute_datu_once() -> None:
     prepare_receive_baotu_task()
     receive_baotu_task()
     llm_qiangdao_name, llm_map_name, llm_coord = capture_and_extract_baotu_llm()
     route_to_target(llm_map_name, llm_coord)
     attack_target_with_name(llm_qiangdao_name)
     fighting()
-    return None
 
 
 def main() -> None:
     sys_util.clear_debug_capture()
     botconfig.init()
-    matched = vision_bot.find_text_by_local_ocr("qiangdao.png", "强盗")
-    print(matched)
+    resp = run_local_ocr("assets/materia/xiaorenwu.jpg", use_det=True, use_cls=False, use_rec=True, log_prefix="[vision_bot]")
+
+    # matched = vision_bot.find_text_by_local_ocr("assets/materia/xiaorenwu.jpg", "店小二")
+    print(resp)
     # out = excute_datu_once()
     # route_strategies.route_by_map("化生寺", (60,55))
     # print(plan)

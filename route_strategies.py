@@ -7,12 +7,12 @@ import operator_util
 import vision_bot
 
 
-def _navigate_to_config_coord(coord_text: str) -> Dict[str, Any]:
+def _navigate_to_config_coord(coord_text: str) -> Tuple[int, int]:
     xy = botconfig._parse_xy(coord_text)
     if xy is None:
         raise RuntimeError("坐标配置格式错误，期望 x,y")
-    nav = vision_bot.navigate_to_coord(x=xy[0], y=xy[1])
-    return {"coord": xy, "navigate": nav}
+    vision_bot.navigate_to_coord(x=xy[0], y=xy[1])
+    return xy
 
 
 def _tap_system_transfer_once() -> Optional[Tuple[int, int]]:
@@ -66,14 +66,12 @@ def _route_via_zhuziguo_to_jingwai_transfer(
     if not bool(fly.get("ok")):
         return {"ok": False, "reason": "fly_to_zhuziguo_failed", "fly": fly}
 
-    zhuziguo_step = _navigate_to_config_coord(botconfig.ZHUZI_TO_JINGWAI)
+    zhuziguo_to_jingwai = _navigate_to_config_coord(botconfig.ZHUZI_TO_JINGWAI)
     tap_transfer_1 = _tap_system_transfer_once()
     if tap_transfer_1 is None:
-        return {"ok": False, "reason": "transfer_not_found_1", "fly": fly, "navigate": zhuziguo_step["navigate"]}
+        return {"ok": False, "reason": "transfer_not_found_1", "fly": fly}
 
-    jingwai_step = _navigate_to_config_coord(entry_coord_text)
-    jingwai_xy = jingwai_step["coord"]
-    nav_jingwai_to_entry = jingwai_step["navigate"]
+    jingwai_xy = _navigate_to_config_coord(entry_coord_text)
 
     tap_transfer_2 = _tap_system_transfer_once()
     if tap_transfer_2 is None:
@@ -81,21 +79,18 @@ def _route_via_zhuziguo_to_jingwai_transfer(
             "ok": False,
             "reason": "transfer_not_found_2",
             "fly": fly,
-            "navigate_jingwai_to_entry": nav_jingwai_to_entry,
         }
 
-    nav_in_target = vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
+    vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
     return {
         "ok": True,
         "strategy": strategy,
         "coord": target_coord,
         "fly": fly,
-        "zhuziguo_to_jingwai": _parse_required_config_coord(botconfig.ZHUZI_TO_JINGWAI, "ZHUZI_TO_JINGWAI"),
+        "zhuziguo_to_jingwai": zhuziguo_to_jingwai,
         "tap_transfer_to_jingwai": tap_transfer_1,
         "jingwai_entry_coord": jingwai_xy,
-        "navigate_jingwai_to_entry": nav_jingwai_to_entry,
         "tap_transfer_to_target": tap_transfer_2,
-        "navigate_in_target": nav_in_target,
     }
 
 
@@ -112,9 +107,7 @@ def _route_via_single_transfer(
     if not bool(fly.get("ok")):
         return {"ok": False, "reason": f"fly_to_{start_destination}_failed", "fly": fly}
 
-    entry_step = _navigate_to_config_coord(entry_coord_text)
-    entry_xy = entry_step["coord"]
-    nav_to_entry = entry_step["navigate"]
+    entry_xy = _navigate_to_config_coord(entry_coord_text)
 
     tap_transfer = _tap_system_transfer_once()
     if tap_transfer is None:
@@ -122,19 +115,16 @@ def _route_via_single_transfer(
             "ok": False,
             "reason": "transfer_not_found",
             "fly": fly,
-            "navigate_to_entry": nav_to_entry,
         }
 
-    nav_in_target = vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
+    vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
     return {
         "ok": True,
         "strategy": strategy,
         "coord": target_coord,
         "fly": fly,
         "entry_coord": entry_xy,
-        "navigate_to_entry": nav_to_entry,
         "tap_transfer": tap_transfer,
-        "navigate_in_target": nav_in_target,
     }
 
 
@@ -143,14 +133,13 @@ def _route_via_direct_fly(destination: str, target_coord: Tuple[int, int]) -> Di
     if not bool(fly.get("ok")):
         return {"ok": False, "reason": f"fly_to_{destination}_failed", "fly": fly}
 
-    nav_in_target = vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
+    vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
     return {
         "ok": True,
         "strategy": "fly_and_navigate",
         "destination": destination,
         "coord": target_coord,
         "fly": fly,
-        "navigate_in_target": nav_in_target,
     }
 
 
@@ -168,8 +157,7 @@ def _route_via_single_transfer_with_log(
         return routed
     print(
         f"[{route_name}] {entry_label}={routed.get('entry_coord')} "
-        f"tap_transfer={routed.get('tap_transfer')} target={target_coord} "
-        f"nav={routed.get('navigate_in_target')}"
+        f"tap_transfer={routed.get('tap_transfer')} target={target_coord}"
     )
     return _success_result(strategy, target_coord)
 
@@ -199,10 +187,10 @@ def _route_via_existing_route_and_transfer(
         print(f"[{route_name}] transfer_not_found")
         return {"ok": False, "reason": "transfer_not_found"}
 
-    nav_in_target = vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
+    vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
     print(
         f"[{route_name}] {entry_label}={entry_coord} "
-        f"tap_transfer={tap_transfer} target={target_coord} nav={nav_in_target}"
+        f"tap_transfer={tap_transfer} target={target_coord}"
     )
     return _success_result(strategy, target_coord)
 
@@ -230,10 +218,10 @@ def _route_via_existing_route_and_npc(
 
     tap_npc = operator_util.tap_template(npc_template)
     tap_woyaoqu = operator_util.tap_template(botconfig.ANDROID_TPL_CHAT_WOYAOQU)
-    nav_in_target = vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
+    vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
     print(
         f"[{route_name}] {entry_label}={entry_coord} tap_npc={tap_npc} "
-        f"tap_woyaoqu={tap_woyaoqu} target={target_coord} nav={nav_in_target}"
+        f"tap_woyaoqu={tap_woyaoqu} target={target_coord}"
     )
     return _success_result(strategy, target_coord)
 
@@ -257,7 +245,7 @@ def _route_via_zhuziguo_to_jingwai_with_log(
         f"tap_transfer_to_jingwai={routed.get('tap_transfer_to_jingwai')} "
         f"{entry_label}={routed.get('jingwai_entry_coord')} "
         f"tap_transfer_to_target={routed.get('tap_transfer_to_target')} "
-        f"target={target_coord} nav={routed.get('navigate_in_target')}"
+        f"target={target_coord}"
     )
     return _success_result(strategy, target_coord)
 
@@ -274,12 +262,7 @@ def _use_changan_flag_to_entry(
         print(f"[{route_name}] use_changan_flag failed reason={changan_flag_step.get('reason')}")
         return {"ok": False, "reason": fail_reason}
 
-    best = changan_flag_step["teleport_point_best"]
-    print(
-        f"[{route_name}] changan_flag target={entry_coord} "
-        f"selected_center={best['center']} confidence={best['confidence']:.3f} "
-        f"candidates={changan_flag_step['teleport_point_count']}"
-    )
+    print(f"[{route_name}] changan_flag target={entry_coord}")
     return {
         "ok": True,
         "entry_coord": entry_coord,
@@ -313,23 +296,21 @@ def _tap_nearest_match(template_path: str, target_xy: Tuple[int, int], threshold
     return {"target": target_xy, "best": best, "count": len(locations)}
 
 
-def _open_bag_and_use_prop(prop_template: str, prop_threshold: float, prop_key: str) -> Dict[str, Any]:
+def _open_bag_and_use_prop(prop_template: str, prop_threshold: float, prop_name: str) -> None:
     tap_menu = operator_util.tap_template(botconfig.ANDROID_TPL_MENU_DAOJU, threshold=botconfig.ANDROID_THR_MENU_DAOJU)
     tap_prop = operator_util.tap_template(prop_template, threshold=prop_threshold)
     tap_use = operator_util.tap_template(botconfig.ANDROID_TPL_PROP_USE, threshold=botconfig.ANDROID_THR_PROP_USE)
-    return {
-        "ok": True,
-        "tap_menu_daoju": tap_menu,
-        prop_key: tap_prop,
-        "tap_use": tap_use,
-    }
+    print(
+        f"[_open_bag_and_use_prop] prop={prop_name} tap_menu_daoju={tap_menu} "
+        f"tap_prop={tap_prop} tap_use={tap_use}"
+    )
 
 
 def use_changan_flag_and_tap_nearest(target_coord: Tuple[int, int]) -> Dict[str, Any]:
-    prop_step = _open_bag_and_use_prop(
+    _open_bag_and_use_prop(
         botconfig.ANDROID_TPL_PROP_CHANGAN_FLAG,
         botconfig.ANDROID_THR_PROP_CHANGAN_FLAG,
-        "tap_changan_flag",
+        "changan_flag",
     )
     nearest = _tap_nearest_match(
         botconfig.ANDROID_TPL_MAP_TELEPORT_POINT,
@@ -341,14 +322,15 @@ def use_changan_flag_and_tap_nearest(target_coord: Tuple[int, int]) -> Dict[str,
             "ok": False,
             "reason": "teleport_point_not_found",
             "target": target_coord,
-            **prop_step,
         }
+    best = nearest["best"]
+    print(
+        f"[use_changan_flag_and_tap_nearest] target={target_coord} selected_center={best['center']} "
+        f"confidence={best['confidence']:.3f} candidates={nearest['count']}"
+    )
     return {
         "ok": True,
         "target": target_coord,
-        **prop_step,
-        "teleport_point_best": nearest["best"],
-        "teleport_point_count": nearest["count"],
     }
 
 
@@ -370,21 +352,21 @@ def fly_to(destination: str) -> Dict[str, Any]:
     if not map_tpl:
         return {"ok": False, "reason": "unsupported_destination", "destination": destination}
 
-    prop_step = _open_bag_and_use_prop(
+    _open_bag_and_use_prop(
         botconfig.ANDROID_TPL_PROP_FEIXINGFU,
         botconfig.ANDROID_THR_PROP_FEIXINGFU,
-        "tap_feixingfu",
+        "feixingfu",
     )
     tap_map = operator_util.tap_template(map_tpl, threshold=botconfig.ANDROID_THR_FEIXINGFU_MAP)
     tap_close = operator_util.try_tap(botconfig.ANDROID_TPL_DAOJU_CLOSE, threshold=botconfig.ANDROID_THR_DAOJU_CLOSE)
+    print(
+        f"[fly_to] destination={destination} map_template={map_tpl} "
+        f"tap_map={tap_map} tap_close_bag={tap_close}"
+    )
     return {
         "ok": True,
         "strategy": "fly",
         "destination": destination,
-        "map_template": map_tpl,
-        **prop_step,
-        "tap_map": tap_map,
-        "tap_close_bag": tap_close,
     }
 
 
@@ -438,10 +420,10 @@ def route_to_datangguojing(coord: Tuple[int, int]) -> Dict[str, Any]:
     )
     tap_npc = operator_util.tap_template(botconfig.ANDROID_TPL_NPC_CHANGAN_YIZHANLAOBAN)
     tap_woyaoqu = operator_util.tap_template(botconfig.ANDROID_TPL_CHAT_WOYAOQU)
-    nav_in_target = vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
+    vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
     print(
         f"[route_to_datangguojing] tap_expand={tap_expand} tap_hide_ui_disable={tap_hide_ui} "
-        f"tap_npc={tap_npc} tap_woyaoqu={tap_woyaoqu} target={coord} nav={nav_in_target}"
+        f"tap_npc={tap_npc} tap_woyaoqu={tap_woyaoqu} target={coord}"
     )
 
     return _success_result("datangguojing", coord)
@@ -465,8 +447,8 @@ def route_to_jiangnanyewai(coord: Tuple[int, int]) -> Dict[str, Any]:
         print("[route_to_jiangnanyewai] transfer_not_found")
         return {"ok": False, "reason": "transfer_not_found"}
 
-    nav_in_target = vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
-    print(f"[route_to_jiangnanyewai] tap_transfer={tap_transfer} target={coord} nav={nav_in_target}")
+    vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
+    print(f"[route_to_jiangnanyewai] tap_transfer={tap_transfer} target={coord}")
     return _success_result("jiangnanyewai", coord)
 
 

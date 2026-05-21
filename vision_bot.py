@@ -6,8 +6,9 @@ import numpy as np
 
 import botconfig
 import adb_util
-from local_ocr_util import detect_coord, run_local_ocr
+from local_ocr_util import detect_coord, flatten_ocr_text, run_local_ocr
 import operator_util
+from roi_util import parse_roi
 import sys_util
 
 screenshot_bgr = operator_util.screenshot_bgr
@@ -150,23 +151,20 @@ def navigate_to_coord(x: int, y: int) -> Dict[str, Any]:
     matched_map_btn = match_best_of_templates(img0, [tpl_map_button, tpl_map_button_2], threshold=thr_map_button)
     if matched_map_btn is None:
         raise RuntimeError("地图按钮模板匹配失败")
-    p_map_button = {
-        "template": str(matched_map_btn["template"]),
-        "top_left": matched_map_btn["top_left"],
-        "confidence": float(matched_map_btn["confidence"]),
-        "tap": tap_matched_center(str(matched_map_btn["template"]), matched_map_btn["top_left"]),
-    }
+    map_button_tpl = str(matched_map_btn["template"])
+    map_button_conf = float(matched_map_btn["confidence"])
+    tap_map_button = tap_matched_center(map_button_tpl, matched_map_btn["top_left"])
 
     adb_ime = botconfig.ANDROID_ADB_IME_ID
     sogou_ime = botconfig.ANDROID_SOGOU_IME_ID
     adb_util.ime_set(adb_ime)
     time.sleep(step_sleep_s)
-    p_x = tap_template(tpl_map_x, threshold=thr_map_x)
+    tap_x = tap_template(tpl_map_x, threshold=thr_map_x)
     time.sleep(step_sleep_s)
     adb_util.adbkeyboard_input_text(str(int(x)))
     time.sleep(step_sleep_s)
 
-    p_y = tap_template(tpl_map_y, threshold=thr_map_y)
+    tap_y = tap_template(tpl_map_y, threshold=thr_map_y)
     time.sleep(step_sleep_s)
     adb_util.adbkeyboard_input_text(str(int(y)))
     time.sleep(step_sleep_s)
@@ -174,39 +172,30 @@ def navigate_to_coord(x: int, y: int) -> Dict[str, Any]:
     adb_util.ime_set(sogou_ime)
     time.sleep(step_sleep_s)
 
-    p_go = tap_template(tpl_map_go, threshold=thr_map_go)
+    tap_go = tap_template(tpl_map_go, threshold=thr_map_go)
     arrival = wait_until_arrived_by_coord()
-    p_exit = None
+    tap_exit = None
     exit_error = None
     if bool(arrival.get("arrived")):
         try:
-            p_exit = tap_template(botconfig.ANDROID_TPL_MAP_EXIT, threshold=botconfig.ANDROID_MATCH_THRESHOLD)
+            tap_exit = tap_template(botconfig.ANDROID_TPL_MAP_EXIT, threshold=botconfig.ANDROID_MATCH_THRESHOLD)
         except Exception as e:
             exit_error = str(e)
 
+    print(
+        f"[vision_bot] navigate_to_coord target=({int(x)}, {int(y)}) "
+        f"map_button={map_button_tpl} map_button_conf={map_button_conf:.3f} "
+        f"tap_map_button={tap_map_button} tap_x={tap_x} tap_y={tap_y} tap_go={tap_go} "
+        f"arrived={bool(arrival.get('arrived'))} coord={arrival.get('coord')} samples={arrival.get('samples')} "
+        f"tap_map_exit={tap_exit} tap_map_exit_error={exit_error}"
+    )
     return {
         "ok": True,
         "target": (int(x), int(y)),
-        "tap_map_button": p_map_button,
-        "tap_x": p_x,
-        "tap_y": p_y,
-        "tap_go": p_go,
-        "arrival": arrival,
-        "tap_map_exit": p_exit,
-        "tap_map_exit_error": exit_error,
+        "arrived": bool(arrival.get("arrived")),
+        "coord": arrival.get("coord"),
+        "samples": arrival.get("samples"),
     }
-
-
-def _parse_roi(roi_text: str, env_name: str) -> Tuple[int, int, int, int]:
-    parts = [x.strip() for x in str(roi_text or "").split(",")]
-    if len(parts) != 4:
-        raise RuntimeError(f"{env_name} 格式错误，期望 x1,y1,x2,y2")
-    x1, y1, x2, y2 = [int(v) for v in parts]
-    if x1 < 0 or y1 < 0:
-        raise RuntimeError(f"{env_name} 数值无效，要求 x1>=0,y1>=0")
-    if x2 <= x1 or y2 <= y1:
-        raise RuntimeError(f"{env_name} 数值无效，要求 x2>x1,y2>y1")
-    return x1, y1, x2, y2
 
 
 def _crop_png_bytes(img_bgr: np.ndarray, roi: Tuple[int, int, int, int]) -> bytes:
@@ -222,7 +211,7 @@ def detect_coord_by_roi() -> Dict[str, Any]:
     roi_text = botconfig.ANDROID_COORD_ROI
     if not roi_text:
         return {"ok": False, "reason": "missing_android_coord_roi", "coord": None}
-    roi = _parse_roi(roi_text, botconfig.KEY_ANDROID_COORD_ROI)
+    roi = parse_roi(roi_text, botconfig.KEY_ANDROID_COORD_ROI)
     img_bgr = screenshot_bgr()
     png_bytes = _crop_png_bytes(img_bgr, roi)
     detected = detect_coord(png_bytes, save_debug=bool(botconfig.is_debug()))
@@ -258,16 +247,11 @@ def wait_until_arrived_by_coord() -> Dict[str, Any]:
 def detect_current_map_by_roi() -> Dict[str, Any]:
     if not botconfig.MHXY_MAP_ROI:
         raise RuntimeError(f"缺少 {botconfig.KEY_MHXY_MAP_ROI}，请在 .env 配置，例如 0,0,120,120")
-    roi = _parse_roi(botconfig.MHXY_MAP_ROI, botconfig.KEY_MHXY_MAP_ROI)
+    roi = parse_roi(botconfig.MHXY_MAP_ROI, botconfig.KEY_MHXY_MAP_ROI)
     img_bgr = screenshot_bgr()
     png_bytes = _crop_png_bytes(img_bgr, roi)
     sys_util.save_debug_image(img_bgr[roi[1]:roi[3], roi[0]:roi[2]], "android_map_roi_cropped")
     ocr_result = run_local_ocr(png_bytes, use_det=True, use_cls=False, use_rec=True, log_prefix="[vision_bot]")
-    parts = []
-    for item in ocr_result.get("result") or []:
-        if not isinstance(item, Sequence) or len(item) < 2:
-            continue
-        parts.append(str(item[1] or "").strip())
-    map_name = "".join(parts).strip()
+    map_name = flatten_ocr_text(ocr_result.get("result"))
     print(f"[vision_bot] current_map raw_text={map_name!r}")
     return {"map_name": map_name, "raw_ocr": ocr_result, "roi": list(roi)}

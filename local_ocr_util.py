@@ -133,7 +133,7 @@ def run_local_ocr(
     return {"result": result, "elapsed_ms": elapsed_ms, "engine_elapse": elapse}
 
 
-def _flatten_ocr_text(result: Any) -> str:
+def flatten_ocr_text(result: Any) -> str:
     if not result:
         return ""
     parts = []
@@ -150,7 +150,7 @@ def _flatten_ocr_text(result: Any) -> str:
 
 def _ocr_coord_local(image_png: bytes, variant_name: str) -> Dict[str, Any]:
     resp = run_local_ocr(image_png, use_det=False, use_cls=False, use_rec=True)
-    raw_text = _flatten_ocr_text(resp.get("result"))
+    raw_text = flatten_ocr_text(resp.get("result"))
     coord = _parse_coord_text(raw_text)
     print(f"[CoordOCRUtil] variant={variant_name} raw_text={raw_text!r} coord={coord}")
     return {
