@@ -6,9 +6,8 @@ import numpy as np
 
 import botconfig
 import adb_util
-from coord_ocr_util import detect_coord, run_local_ocr
+from local_ocr_util import detect_coord, run_local_ocr
 import operator_util
-import siliflow_client
 import sys_util
 
 screenshot_bgr = operator_util.screenshot_bgr
@@ -263,6 +262,12 @@ def detect_current_map_by_roi() -> Dict[str, Any]:
     img_bgr = screenshot_bgr()
     png_bytes = _crop_png_bytes(img_bgr, roi)
     sys_util.save_debug_image(img_bgr[roi[1]:roi[3], roi[0]:roi[2]], "android_map_roi_cropped")
-    ocr_result = siliflow_client.siliconflow_paddleocr(png_bytes)
-    map_name = str(ocr_result.get("content", "")).strip()
+    ocr_result = run_local_ocr(png_bytes, use_det=True, use_cls=False, use_rec=True, log_prefix="[vision_bot]")
+    parts = []
+    for item in ocr_result.get("result") or []:
+        if not isinstance(item, Sequence) or len(item) < 2:
+            continue
+        parts.append(str(item[1] or "").strip())
+    map_name = "".join(parts).strip()
+    print(f"[vision_bot] current_map raw_text={map_name!r}")
     return {"map_name": map_name, "raw_ocr": ocr_result, "roi": list(roi)}

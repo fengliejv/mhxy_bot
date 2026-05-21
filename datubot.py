@@ -1,16 +1,48 @@
+import re
 import time
 from typing import Any, Dict, Optional, Tuple
 
 import botconfig
 import adb_util
+import operator_util
 import sys_util
 import vision_bot
 import route_strategies as route_strategies
 from agent_service import extract_baotu_info, route_image_intent
+from local_ocr_util import run_local_ocr
 
 
 def _print_step(name: str, detail: str) -> None:
     print(f"[datubot] {name}: {detail}")
+
+
+def _flatten_ocr_text(result: Any) -> str:
+    if not result:
+        return ""
+    parts = []
+    for item in result:
+        if not isinstance(item, (list, tuple)) or not item:
+            continue
+        if isinstance(item[0], str):
+            parts.append(str(item[0]))
+            continue
+        if len(item) >= 2 and isinstance(item[1], str):
+            parts.append(str(item[1]))
+    return "".join(parts).strip()
+
+
+def _detect_battle_timer_text() -> str:
+    roi_text = str(botconfig.BATTLE_CALCULATION_ROI or "").strip()
+    if not roi_text:
+        raise RuntimeError(f"缺少 {botconfig.KEY_BATTLE_CALCULATION_ROI}，请在 .env 配置，例如 100,100,200,200")
+
+    x1, y1, x2, y2 = vision_bot._parse_roi(roi_text, botconfig.KEY_BATTLE_CALCULATION_ROI)
+    img_bgr = vision_bot.screenshot_bgr()
+    cropped = img_bgr[y1:y2, x1:x2]
+    ocr_result = run_local_ocr(cropped, use_det=False, use_cls=False, use_rec=True, log_prefix="[datubot]")
+    raw_text = _flatten_ocr_text(ocr_result.get("result"))
+    _print_step("battle_timer_ocr", f"roi={[x1, y1, x2, y2]} raw_text={raw_text!r}")
+    return raw_text
 
 
 def cleanup_desktop() -> None:
@@ -59,38 +91,6 @@ def cleanup_desktop() -> None:
     ]
     tapped_names = [name for name, value in tapped if value is not None]
     _print_step("cleanup_desktop", f"tapped={tapped_names}")
-
-
-def talk_to_dianxiaoer() -> None:
-    cleanup_desktop()
-    img_bgr = vision_bot.screenshot_bgr()
-    matched = vision_bot.match_best_of_templates(
-        img_bgr,
-        [botconfig.ANDROID_TPL_NPC_DIANXIAOER_1, botconfig.ANDROID_TPL_NPC_DIANXIAOER_2, botconfig.ANDROID_TPL_NPC_DIANXIAOER_3],
-        threshold=0.5,
-    )
-    if matched is None:
-        raise RuntimeError("店小二模板匹配失败")
-
-    tpl = str(matched["template"])
-    top_left = matched["top_left"]
-    conf = float(matched["confidence"])
-    w, h = vision_bot.get_template_wh(tpl)
-    margin = max(5, int(w * 0.1))
-    margin = min(margin, max(1, w - 1))
-    x_edge = int(top_left[0] + margin)
-    y_edge = int(top_left[1] + h / 2)
-    x_center = int(top_left[0] + w / 2)
-    y_center = int(top_left[1] + h / 2)
-
-    adb_util.tap(x_edge, y_edge)
-    time.sleep(2.0)
-    adb_util.tap(x_center, y_center)
-    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
-    _print_step(
-        "talk_to_dianxiaoer",
-        f"template={tpl} confidence={conf:.3f} tap_edge={(x_edge, y_edge)} tap_center={(x_center, y_center)}",
-    )
 
 
 def fly_to_hotel() -> None:
@@ -268,19 +268,6 @@ def prepare_receive_baotu_task() -> None:
     enter_hotel()
     _print_step("prepare_receive_baotu_task", "done")
 
-
-def judge_after_receive() -> Dict[str, Any]:
-    time.sleep(max(0.5, float(botconfig.ANDROID_STEP_SLEEP_S)))
-    img_bgr = vision_bot.screenshot_bgr()
-    judged = route_image_intent(img_bgr)
-    _print_step("judge_after_receive", str(judged))
-    return judged
-
-
-def got_baotu_task(judged: Dict[str, Any]) -> bool:
-    return str(judged.get("category", "")).strip().lower() in ("mhxy_baotu", "baotu", "mhxy")
-
-
 def route_to_target(llm_map_name: str, llm_coord: Optional[Tuple[int, int]]) -> Dict[str, Any]:
     plan = route_strategies.route_by_map(llm_map_name, llm_coord)
     _print_step(
@@ -292,18 +279,68 @@ def route_to_target(llm_map_name: str, llm_coord: Optional[Tuple[int, int]]) -> 
         raise RuntimeError(f"前往目标失败: {plan}")
     return plan
 
-def attack_target(llm_qiangdao_name: str) -> None:
+def attack_target_with_name(name: str) -> None:
+    name = str(name or "").strip()
+    if not name:
+        raise RuntimeError("缺少名称，无法发起战斗")
 
-    pass
+    img_bgr = vision_bot.screenshot_bgr()
+    matched = vision_bot.find_text_by_local_ocr(img_bgr, name)
+    if matched is None:
+        raise RuntimeError(f"未找到名称: {name}")
 
+    center = matched["center"]
+    tap_pt = (int(center[0]), max(0, int(center[1]) - 10))
+    adb_util.tap(tap_pt[0], tap_pt[1])
+    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
 
+    talk = vision_bot.tap_template(
+        botconfig.ANDROID_TPL_BAOTU_ATTACK_TALK,
+        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
+    )
+    _print_step(
+        "attack_target",
+        f"name={name} center={center} tap={tap_pt} talk={talk}",
+    )
+
+def fighting_attack_once() -> None:
+    tap_hero = operator_util.tap_template(
+        botconfig.ANDROID_TPL_ZHAOHUANSHOU_QIANGDAO,
+        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
+    )
+    time.sleep(0.5)
+    tap_pet = operator_util.tap_template(
+        botconfig.ANDROID_TPL_ZHAOHUANSHOU_QIANGDAO,
+        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
+    )
+    _print_step(
+        "fighting_attack_once",
+        f"hero={tap_hero} pet={tap_pet}",
+    )
+
+def fighting() -> None:
+    max_rounds = 3
+    for round_idx in range(1, max_rounds + 1):
+        raw_text = _detect_battle_timer_text()
+        if re.search(r"\d", raw_text) is None:
+            _print_step("fighting", f"round={round_idx} timer_not_found battle_finished")
+            return
+
+        _print_step("fighting", f"round={round_idx} timer={raw_text!r} attack")
+        fighting_attack_once()
+
+        if round_idx < max_rounds:
+            time.sleep(5.0)
+
+    _print_step("fighting", f"reached_max_rounds={max_rounds}")
 
 def excute_datu_once() -> Dict[str, Any]:
     prepare_receive_baotu_task()
     receive_baotu_task()
     llm_qiangdao_name, llm_map_name, llm_coord = capture_and_extract_baotu_llm()
     route_to_target(llm_map_name, llm_coord)
-    attack_target(llm_qiangdao_name)
+    attack_target_with_name(llm_qiangdao_name)
+    fighting()
     return None
 
 

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import adb_util
 import botconfig
@@ -22,7 +22,43 @@ def _tap_system_transfer_once() -> Optional[Tuple[int, int]]:
     )
 
 
-def _route_via_jingwai_transfer(entry_coord_text: str, target_coord: Tuple[int, int], strategy: str) -> Dict[str, Any]:
+def _parse_required_config_coord(coord_text: str, config_name: str) -> Tuple[int, int]:
+    xy = botconfig._parse_xy(coord_text)
+    if xy is None:
+        raise RuntimeError(f"{config_name} 坐标配置格式错误，期望 x,y")
+    return xy
+
+
+def _success_result(strategy: str, coord: Tuple[int, int]) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "strategy": strategy,
+        "coord": coord,
+    }
+
+
+def _normalize_coord(coord: Optional[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
+    if coord is None:
+        return None
+    return int(coord[0]), int(coord[1])
+
+
+def _route_with_required_coord(
+    map_name: str,
+    coord: Optional[Tuple[int, int]],
+    route_func: Callable[[Tuple[int, int]], Dict[str, Any]],
+) -> Dict[str, Any]:
+    normalized = _normalize_coord(coord)
+    if normalized is None:
+        return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
+    return route_func(normalized)
+
+
+def _route_via_zhuziguo_to_jingwai_transfer(
+    entry_coord_text: str,
+    target_coord: Tuple[int, int],
+    strategy: str,
+) -> Dict[str, Any]:
     if target_coord is None:
         return {"ok": False, "reason": "missing_target_coord", "coord": target_coord}
 
@@ -53,11 +89,12 @@ def _route_via_jingwai_transfer(entry_coord_text: str, target_coord: Tuple[int, 
         "ok": True,
         "strategy": strategy,
         "coord": target_coord,
-        "fly_to_zhuziguo": fly,
-        "tap_transfer_1": tap_transfer_1,
+        "fly": fly,
+        "zhuziguo_to_jingwai": _parse_required_config_coord(botconfig.ZHUZI_TO_JINGWAI, "ZHUZI_TO_JINGWAI"),
+        "tap_transfer_to_jingwai": tap_transfer_1,
         "jingwai_entry_coord": jingwai_xy,
         "navigate_jingwai_to_entry": nav_jingwai_to_entry,
-        "tap_transfer_2": tap_transfer_2,
+        "tap_transfer_to_target": tap_transfer_2,
         "navigate_in_target": nav_in_target,
     }
 
@@ -117,6 +154,138 @@ def _route_via_direct_fly(destination: str, target_coord: Tuple[int, int]) -> Di
     }
 
 
+def _route_via_single_transfer_with_log(
+    route_name: str,
+    start_destination: str,
+    entry_coord_text: str,
+    target_coord: Tuple[int, int],
+    strategy: str,
+    entry_label: str,
+) -> Dict[str, Any]:
+    routed = _route_via_single_transfer(start_destination, entry_coord_text, target_coord, strategy=strategy)
+    if not bool(routed.get("ok")):
+        print(f"[{route_name}] single_transfer failed reason={routed.get('reason')}")
+        return routed
+    print(
+        f"[{route_name}] {entry_label}={routed.get('entry_coord')} "
+        f"tap_transfer={routed.get('tap_transfer')} target={target_coord} "
+        f"nav={routed.get('navigate_in_target')}"
+    )
+    return _success_result(strategy, target_coord)
+
+
+def _route_via_existing_route_and_transfer(
+    route_name: str,
+    parent_route: Callable[[Tuple[int, int]], Dict[str, Any]],
+    parent_route_name: str,
+    parent_fail_reason: str,
+    entry_coord_text: str,
+    config_name: str,
+    target_coord: Tuple[int, int],
+    strategy: str,
+    entry_label: str,
+) -> Dict[str, Any]:
+    if target_coord is None:
+        return {"ok": False, "reason": "missing_target_coord", "coord": target_coord}
+
+    entry_coord = _parse_required_config_coord(entry_coord_text, config_name)
+    routed = parent_route(entry_coord)
+    if not bool(routed.get("ok")):
+        print(f"[{route_name}] {parent_route_name} failed reason={routed.get('reason')}")
+        return {"ok": False, "reason": parent_fail_reason}
+
+    tap_transfer = _tap_system_transfer_once()
+    if tap_transfer is None:
+        print(f"[{route_name}] transfer_not_found")
+        return {"ok": False, "reason": "transfer_not_found"}
+
+    nav_in_target = vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
+    print(
+        f"[{route_name}] {entry_label}={entry_coord} "
+        f"tap_transfer={tap_transfer} target={target_coord} nav={nav_in_target}"
+    )
+    return _success_result(strategy, target_coord)
+
+
+def _route_via_existing_route_and_npc(
+    route_name: str,
+    parent_route: Callable[[Tuple[int, int]], Dict[str, Any]],
+    parent_route_name: str,
+    parent_fail_reason: str,
+    entry_coord_text: str,
+    config_name: str,
+    npc_template: str,
+    target_coord: Tuple[int, int],
+    strategy: str,
+    entry_label: str,
+) -> Dict[str, Any]:
+    if target_coord is None:
+        return {"ok": False, "reason": "missing_target_coord", "coord": target_coord}
+
+    entry_coord = _parse_required_config_coord(entry_coord_text, config_name)
+    routed = parent_route(entry_coord)
+    if not bool(routed.get("ok")):
+        print(f"[{route_name}] {parent_route_name} failed reason={routed.get('reason')}")
+        return {"ok": False, "reason": parent_fail_reason}
+
+    tap_npc = operator_util.tap_template(npc_template)
+    tap_woyaoqu = operator_util.tap_template(botconfig.ANDROID_TPL_CHAT_WOYAOQU)
+    nav_in_target = vision_bot.navigate_to_coord(x=int(target_coord[0]), y=int(target_coord[1]))
+    print(
+        f"[{route_name}] {entry_label}={entry_coord} tap_npc={tap_npc} "
+        f"tap_woyaoqu={tap_woyaoqu} target={target_coord} nav={nav_in_target}"
+    )
+    return _success_result(strategy, target_coord)
+
+
+def _route_via_zhuziguo_to_jingwai_with_log(
+    route_name: str,
+    entry_coord_text: str,
+    target_coord: Tuple[int, int],
+    strategy: str,
+    entry_label: str,
+) -> Dict[str, Any]:
+    if target_coord is None:
+        return {"ok": False, "reason": "missing_target_coord", "coord": target_coord}
+
+    routed = _route_via_zhuziguo_to_jingwai_transfer(entry_coord_text, target_coord, strategy=strategy)
+    if not bool(routed.get("ok")):
+        print(f"[{route_name}] route_via_zhuziguo_to_jingwai failed reason={routed.get('reason')}")
+        return routed
+    print(
+        f"[{route_name}] zhuziguo_to_jingwai={routed.get('zhuziguo_to_jingwai')} "
+        f"tap_transfer_to_jingwai={routed.get('tap_transfer_to_jingwai')} "
+        f"{entry_label}={routed.get('jingwai_entry_coord')} "
+        f"tap_transfer_to_target={routed.get('tap_transfer_to_target')} "
+        f"target={target_coord} nav={routed.get('navigate_in_target')}"
+    )
+    return _success_result(strategy, target_coord)
+
+
+def _use_changan_flag_to_entry(
+    route_name: str,
+    entry_coord_text: str,
+    config_name: str,
+    fail_reason: str,
+) -> Dict[str, Any]:
+    entry_coord = _parse_required_config_coord(entry_coord_text, config_name)
+    changan_flag_step = use_changan_flag_and_tap_nearest(entry_coord)
+    if not bool(changan_flag_step.get("ok")):
+        print(f"[{route_name}] use_changan_flag failed reason={changan_flag_step.get('reason')}")
+        return {"ok": False, "reason": fail_reason}
+
+    best = changan_flag_step["teleport_point_best"]
+    print(
+        f"[{route_name}] changan_flag target={entry_coord} "
+        f"selected_center={best['center']} confidence={best['confidence']:.3f} "
+        f"candidates={changan_flag_step['teleport_point_count']}"
+    )
+    return {
+        "ok": True,
+        "entry_coord": entry_coord,
+    }
+
+
 def _tap_nearest_match(template_path: str, target_xy: Tuple[int, int], threshold: float) -> Optional[Dict[str, Any]]:
     img_bgr = operator_util.screenshot_bgr()
     ok, _, locations = match_template(img_bgr, template_path, threshold=threshold, find_all=True)
@@ -144,13 +313,24 @@ def _tap_nearest_match(template_path: str, target_xy: Tuple[int, int], threshold
     return {"target": target_xy, "best": best, "count": len(locations)}
 
 
-def use_changan_flag_and_tap_nearest(target_coord: Tuple[int, int]) -> Dict[str, Any]:
+def _open_bag_and_use_prop(prop_template: str, prop_threshold: float, prop_key: str) -> Dict[str, Any]:
     tap_menu = operator_util.tap_template(botconfig.ANDROID_TPL_MENU_DAOJU, threshold=botconfig.ANDROID_THR_MENU_DAOJU)
-    tap_changan_flag = operator_util.tap_template(
-        botconfig.ANDROID_TPL_PROP_CHANGAN_FLAG,
-        threshold=botconfig.ANDROID_THR_PROP_CHANGAN_FLAG,
-    )
+    tap_prop = operator_util.tap_template(prop_template, threshold=prop_threshold)
     tap_use = operator_util.tap_template(botconfig.ANDROID_TPL_PROP_USE, threshold=botconfig.ANDROID_THR_PROP_USE)
+    return {
+        "ok": True,
+        "tap_menu_daoju": tap_menu,
+        prop_key: tap_prop,
+        "tap_use": tap_use,
+    }
+
+
+def use_changan_flag_and_tap_nearest(target_coord: Tuple[int, int]) -> Dict[str, Any]:
+    prop_step = _open_bag_and_use_prop(
+        botconfig.ANDROID_TPL_PROP_CHANGAN_FLAG,
+        botconfig.ANDROID_THR_PROP_CHANGAN_FLAG,
+        "tap_changan_flag",
+    )
     nearest = _tap_nearest_match(
         botconfig.ANDROID_TPL_MAP_TELEPORT_POINT,
         target_coord,
@@ -161,16 +341,12 @@ def use_changan_flag_and_tap_nearest(target_coord: Tuple[int, int]) -> Dict[str,
             "ok": False,
             "reason": "teleport_point_not_found",
             "target": target_coord,
-            "tap_menu_daoju": tap_menu,
-            "tap_changan_flag": tap_changan_flag,
-            "tap_use": tap_use,
+            **prop_step,
         }
     return {
         "ok": True,
         "target": target_coord,
-        "tap_menu_daoju": tap_menu,
-        "tap_changan_flag": tap_changan_flag,
-        "tap_use": tap_use,
+        **prop_step,
         "teleport_point_best": nearest["best"],
         "teleport_point_count": nearest["count"],
     }
@@ -194,9 +370,11 @@ def fly_to(destination: str) -> Dict[str, Any]:
     if not map_tpl:
         return {"ok": False, "reason": "unsupported_destination", "destination": destination}
 
-    tap_menu = operator_util.tap_template(botconfig.ANDROID_TPL_MENU_DAOJU, threshold=botconfig.ANDROID_THR_MENU_DAOJU)
-    tap_feixingfu = operator_util.tap_template(botconfig.ANDROID_TPL_PROP_FEIXINGFU, threshold=botconfig.ANDROID_THR_PROP_FEIXINGFU)
-    tap_use = operator_util.tap_template(botconfig.ANDROID_TPL_PROP_USE, threshold=botconfig.ANDROID_THR_PROP_USE)
+    prop_step = _open_bag_and_use_prop(
+        botconfig.ANDROID_TPL_PROP_FEIXINGFU,
+        botconfig.ANDROID_THR_PROP_FEIXINGFU,
+        "tap_feixingfu",
+    )
     tap_map = operator_util.tap_template(map_tpl, threshold=botconfig.ANDROID_THR_FEIXINGFU_MAP)
     tap_close = operator_util.try_tap(botconfig.ANDROID_TPL_DAOJU_CLOSE, threshold=botconfig.ANDROID_THR_DAOJU_CLOSE)
     return {
@@ -204,68 +382,53 @@ def fly_to(destination: str) -> Dict[str, Any]:
         "strategy": "fly",
         "destination": destination,
         "map_template": map_tpl,
-        "tap_menu_daoju": tap_menu,
-        "tap_feixingfu": tap_feixingfu,
-        "tap_use": tap_use,
+        **prop_step,
         "tap_map": tap_map,
         "tap_close_bag": tap_close,
     }
 
 
 def route_to_shituo(coord: Tuple[int, int]) -> Dict[str, Any]:
-    routed = _route_via_jingwai_transfer(botconfig.JINGWAI_TO_SHITUO, coord, strategy="shituo")
-    if not bool(routed.get("ok")):
-        return routed
-    routed["jingwai_to_shituo"] = routed.pop("jingwai_entry_coord")
-    routed["navigate_jingwai_to_shituo_entry"] = routed.pop("navigate_jingwai_to_entry")
-    routed["navigate_in_shituo_to_target"] = routed.pop("navigate_in_target")
-    return routed
+    return _route_via_zhuziguo_to_jingwai_with_log(
+        route_name="route_to_shituo",
+        entry_coord_text=botconfig.JINGWAI_TO_SHITUO,
+        target_coord=coord,
+        strategy="shituo",
+        entry_label="jingwai_to_shituo",
+    )
 
 
 def route_to_mowang(coord: Tuple[int, int]) -> Dict[str, Any]:
-    routed = _route_via_jingwai_transfer(botconfig.JINGWAI_TO_MOWANG, coord, strategy="mowang")
-    if not bool(routed.get("ok")):
-        return routed
-    routed["jingwai_to_mowang"] = routed.pop("jingwai_entry_coord")
-    routed["navigate_jingwai_to_mowang_entry"] = routed.pop("navigate_jingwai_to_entry")
-    routed["navigate_in_mowang_to_target"] = routed.pop("navigate_in_target")
-    return routed
+    return _route_via_zhuziguo_to_jingwai_with_log(
+        route_name="route_to_mowang",
+        entry_coord_text=botconfig.JINGWAI_TO_MOWANG,
+        target_coord=coord,
+        strategy="mowang",
+        entry_label="jingwai_to_mowang",
+    )
 
 def route_to_huasheng(coord: Tuple[int, int]) -> Dict[str, Any]:
-    routed = _route_via_single_transfer(
-        "长安城",
-        botconfig.CHANGAN_TO_HUANSHENG,
-        coord,
+    return _route_via_single_transfer_with_log(
+        route_name="route_to_huasheng",
+        start_destination="长安城",
+        entry_coord_text=botconfig.CHANGAN_TO_HUANSHENG,
+        target_coord=coord,
         strategy="huasheng",
+        entry_label="changan_to_huasheng",
     )
-    if not bool(routed.get("ok")):
-        return routed
-    routed["fly_to_changan"] = routed.pop("fly")
-    routed["changan_to_huansheng"] = routed.pop("entry_coord")
-    routed["navigate_changan_to_huasheng_entry"] = routed.pop("navigate_to_entry")
-    routed["tap_transfer_to_huasheng"] = routed.pop("tap_transfer")
-    routed["navigate_in_huasheng_to_target"] = routed.pop("navigate_in_target")
-    return routed
 
 def route_to_datangguojing(coord: Tuple[int, int]) -> Dict[str, Any]:
     if coord is None:
         return {"ok": False, "reason": "missing_target_coord", "coord": coord}
 
-    yizhan_target = botconfig._parse_xy(botconfig.CHANGAN_FLY_YIZHANLAOBAN)
-    if yizhan_target is None:
-        raise RuntimeError("CHANGAN_FLY_YIZHANLAOBAN 坐标配置格式错误，期望 x,y")
-
-    changan_flag_step = use_changan_flag_and_tap_nearest(yizhan_target)
-    if not bool(changan_flag_step.get("ok")):
-        print(f"[route_to_datangguojing] use_changan_flag failed reason={changan_flag_step.get('reason')}")
-        return {"ok": False, "reason": "yizhanlaoban_teleport_not_found"}
-
-    best = changan_flag_step["teleport_point_best"]
-    print(
-        f"[route_to_datangguojing] changan_flag target={yizhan_target} "
-        f"selected_center={best['center']} confidence={best['confidence']:.3f} "
-        f"candidates={changan_flag_step['teleport_point_count']}"
+    flag_entry = _use_changan_flag_to_entry(
+        route_name="route_to_datangguojing",
+        entry_coord_text=botconfig.CHANGAN_FLY_YIZHANLAOBAN,
+        config_name="CHANGAN_FLY_YIZHANLAOBAN",
+        fail_reason="yizhanlaoban_teleport_not_found",
     )
+    if not bool(flag_entry.get("ok")):
+        return flag_entry
 
     tap_expand = vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
     tap_hide_ui = (
@@ -281,32 +444,21 @@ def route_to_datangguojing(coord: Tuple[int, int]) -> Dict[str, Any]:
         f"tap_npc={tap_npc} tap_woyaoqu={tap_woyaoqu} target={coord} nav={nav_in_target}"
     )
 
-    return {
-        "ok": True,
-        "strategy": "datangguojing",
-        "coord": coord,
-    }
+    return _success_result("datangguojing", coord)
 
 
 def route_to_jiangnanyewai(coord: Tuple[int, int]) -> Dict[str, Any]:
     if coord is None:
         return {"ok": False, "reason": "missing_target_coord", "coord": coord}
 
-    yewai_target = botconfig._parse_xy(botconfig.CHANGAN_FLY_YEWAI)
-    if yewai_target is None:
-        raise RuntimeError("CHANGAN_FLY_YEWAI 坐标配置格式错误，期望 x,y")
-
-    changan_flag_step = use_changan_flag_and_tap_nearest(yewai_target)
-    if not bool(changan_flag_step.get("ok")):
-        print(f"[route_to_jiangnanyewai] use_changan_flag failed reason={changan_flag_step.get('reason')}")
-        return {"ok": False, "reason": "yewai_entry_not_found"}
-
-    best = changan_flag_step["teleport_point_best"]
-    print(
-        f"[route_to_jiangnanyewai] changan_flag target={yewai_target} "
-        f"selected_center={best['center']} confidence={best['confidence']:.3f} "
-        f"candidates={changan_flag_step['teleport_point_count']}"
+    flag_entry = _use_changan_flag_to_entry(
+        route_name="route_to_jiangnanyewai",
+        entry_coord_text=botconfig.CHANGAN_FLY_YEWAI,
+        config_name="CHANGAN_FLY_YEWAI",
+        fail_reason="yewai_entry_not_found",
     )
+    if not bool(flag_entry.get("ok")):
+        return flag_entry
 
     tap_transfer = _tap_system_transfer_once()
     if tap_transfer is None:
@@ -315,315 +467,186 @@ def route_to_jiangnanyewai(coord: Tuple[int, int]) -> Dict[str, Any]:
 
     nav_in_target = vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
     print(f"[route_to_jiangnanyewai] tap_transfer={tap_transfer} target={coord} nav={nav_in_target}")
-    return {
-        "ok": True,
-        "strategy": "jiangnanyewai",
-        "coord": coord,
-    }
+    return _success_result("jiangnanyewai", coord)
 
 
 def route_to_putuo(coord: Tuple[int, int]) -> Dict[str, Any]:
-    if coord is None:
-        return {"ok": False, "reason": "missing_target_coord", "coord": coord}
-
-    guojing_putuo = botconfig._parse_xy(botconfig.GUOJING_TO_PUTUO)
-    if guojing_putuo is None:
-        raise RuntimeError("GUOJING_TO_PUTUO 坐标配置格式错误，期望 x,y")
-
-    routed = route_to_datangguojing(guojing_putuo)
-    if not bool(routed.get("ok")):
-        print(f"[route_to_putuo] route_to_datangguojing failed reason={routed.get('reason')}")
-        return {"ok": False, "reason": "route_to_datangguojing_failed"}
-
-    tap_npc = operator_util.tap_template(botconfig.ANDROID_TPL_NPC_JIEYINXIANNV)
-    tap_woyaoqu = operator_util.tap_template(botconfig.ANDROID_TPL_CHAT_WOYAOQU)
-    nav_in_target = vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
-    print(
-        f"[route_to_putuo] guojing_to_putuo={guojing_putuo} tap_npc={tap_npc} "
-        f"tap_woyaoqu={tap_woyaoqu} target={coord} nav={nav_in_target}"
+    return _route_via_existing_route_and_npc(
+        route_name="route_to_putuo",
+        parent_route=route_to_datangguojing,
+        parent_route_name="route_to_datangguojing",
+        parent_fail_reason="route_to_datangguojing_failed",
+        entry_coord_text=botconfig.GUOJING_TO_PUTUO,
+        config_name="GUOJING_TO_PUTUO",
+        npc_template=botconfig.ANDROID_TPL_NPC_JIEYINXIANNV,
+        target_coord=coord,
+        strategy="putuo",
+        entry_label="guojing_to_putuo",
     )
-    return {
-        "ok": True,
-        "strategy": "putuo",
-        "coord": coord,
-    }
 
 def route_to_difu(coord: Tuple[int, int]) -> Dict[str, Any]:
-    if coord is None:
-        return {"ok": False, "reason": "missing_target_coord", "coord": coord}
-
-    guojing_difu = botconfig._parse_xy(botconfig.GUOJING_TO_DIFU)
-    if guojing_difu is None:
-        raise RuntimeError("GUOJING_TO_DIFU 坐标配置格式错误，期望 x,y")
-
-    routed = route_to_datangguojing(guojing_difu)
-    if not bool(routed.get("ok")):
-        print(f"[route_to_difu] route_to_datangguojing failed reason={routed.get('reason')}")
-        return {"ok": False, "reason": "route_to_datangguojing_failed"}
-
-    tap_transfer = _tap_system_transfer_once()
-    if tap_transfer is None:
-        print("[route_to_difu] transfer_not_found")
-        return {"ok": False, "reason": "transfer_not_found"}
-
-    nav_in_target = vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
-    print(f"[route_to_difu] guojing_to_difu={guojing_difu} tap_transfer={tap_transfer} target={coord} nav={nav_in_target}")
-    return {
-        "ok": True,
-        "strategy": "difu",
-        "coord": coord,
-    }
+    return _route_via_existing_route_and_transfer(
+        route_name="route_to_difu",
+        parent_route=route_to_datangguojing,
+        parent_route_name="route_to_datangguojing",
+        parent_fail_reason="route_to_datangguojing_failed",
+        entry_coord_text=botconfig.GUOJING_TO_DIFU,
+        config_name="GUOJING_TO_DIFU",
+        target_coord=coord,
+        strategy="difu",
+        entry_label="guojing_to_difu",
+    )
 
 def route_to_donghaiwan(coord: Tuple[int, int]) -> Dict[str, Any]:
-    routed = _route_via_single_transfer(
-        "建邺城",
-        botconfig.JIANYE_TO_DONGHAIWAN,
-        coord,
+    return _route_via_single_transfer_with_log(
+        route_name="route_to_donghaiwan",
+        start_destination="建邺城",
+        entry_coord_text=botconfig.JIANYE_TO_DONGHAIWAN,
+        target_coord=coord,
         strategy="donghaiwan",
+        entry_label="jianye_to_donghaiwan",
     )
-    if not bool(routed.get("ok")):
-        return routed
-    routed["fly_to_jianye"] = routed.pop("fly")
-    routed["jianye_to_donghaiwan"] = routed.pop("entry_coord")
-    routed["navigate_jianye_to_donghaiwan_entry"] = routed.pop("navigate_to_entry")
-    routed["tap_transfer_to_donghaiwan"] = routed.pop("tap_transfer")
-    routed["navigate_in_donghaiwan_to_target"] = routed.pop("navigate_in_target")
-    return routed
 
 def route_to_nver(coord: Tuple[int, int]) -> Dict[str, Any]:
-    routed = _route_via_single_transfer(
-        "傲来国",
-        botconfig.AOLAI_TO_NVER,
-        coord,
+    return _route_via_single_transfer_with_log(
+        route_name="route_to_nver",
+        start_destination="傲来国",
+        entry_coord_text=botconfig.AOLAI_TO_NVER,
+        target_coord=coord,
         strategy="nver",
+        entry_label="aolai_to_nver",
     )
-    if not bool(routed.get("ok")):
-        return routed
-    routed["fly_to_aolai"] = routed.pop("fly")
-    routed["aolai_to_nver"] = routed.pop("entry_coord")
-    routed["navigate_aolai_to_nver_entry"] = routed.pop("navigate_to_entry")
-    routed["tap_transfer_to_nver"] = routed.pop("tap_transfer")
-    routed["navigate_in_nver_to_target"] = routed.pop("navigate_in_target")
-    return routed
 
 def route_to_tiangong(coord: Tuple[int, int]) -> Dict[str, Any]:
-    if coord is None:
-        return {"ok": False, "reason": "missing_target_coord", "coord": coord}
-
-    changshoujiaowai_tiangong = botconfig._parse_xy(botconfig.CHANGSHOUJIAOWAI_TO_TIANGONG)
-    if changshoujiaowai_tiangong is None:
-        raise RuntimeError("CHANGSHOUJIAOWAI_TO_TIANGONG 坐标配置格式错误，期望 x,y")
-
-    routed = route_to_changshoujiaowai(changshoujiaowai_tiangong)
-    if not bool(routed.get("ok")):
-        print(f"[route_to_tiangong] route_to_changshoujiaowai failed reason={routed.get('reason')}")
-        return {"ok": False, "reason": "route_to_changshoujiaowai_failed"}
-
-    tap_npc = operator_util.tap_template(botconfig.ANDROID_TPL_NPC_TIANJIANG)
-    tap_woyaoqu = operator_util.tap_template(botconfig.ANDROID_TPL_CHAT_WOYAOQU)
-    nav_in_target = vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
-    print(
-        f"[route_to_tiangong] changshoujiaowai_to_tiangong={changshoujiaowai_tiangong} "
-        f"tap_npc={tap_npc} tap_woyaoqu={tap_woyaoqu} target={coord} nav={nav_in_target}"
+    return _route_via_existing_route_and_npc(
+        route_name="route_to_tiangong",
+        parent_route=route_to_changshoujiaowai,
+        parent_route_name="route_to_changshoujiaowai",
+        parent_fail_reason="route_to_changshoujiaowai_failed",
+        entry_coord_text=botconfig.CHANGSHOUJIAOWAI_TO_TIANGONG,
+        config_name="CHANGSHOUJIAOWAI_TO_TIANGONG",
+        npc_template=botconfig.ANDROID_TPL_NPC_TIANJIANG,
+        target_coord=coord,
+        strategy="tiangong",
+        entry_label="changshoujiaowai_to_tiangong",
     )
-    return {
-        "ok": True,
-        "strategy": "tiangong",
-        "coord": coord,
-    }
 
 def route_to_longgong(coord: Tuple[int, int]) -> Dict[str, Any]:
-    if coord is None:
-        return {"ok": False, "reason": "missing_target_coord", "coord": coord}
-
-    donghaiwan_longgong = botconfig._parse_xy(botconfig.DONGHAIWAN_TO_LONGGONG)
-    if donghaiwan_longgong is None:
-        raise RuntimeError("DONGHAIWAN_TO_LONGGONG 坐标配置格式错误，期望 x,y")
-
-    routed = route_to_donghaiwan(donghaiwan_longgong)
-    if not bool(routed.get("ok")):
-        print(f"[route_to_longgong] route_to_donghaiwan failed reason={routed.get('reason')}")
-        return {"ok": False, "reason": "route_to_donghaiwan_failed"}
-
-    tap_npc = operator_util.tap_template(botconfig.ANDROID_TPL_NPC_LAOXIA)
-    tap_woyaoqu = operator_util.tap_template(botconfig.ANDROID_TPL_CHAT_WOYAOQU)
-    nav_in_target = vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
-    print(
-        f"[route_to_longgong] donghaiwan_to_longgong={donghaiwan_longgong} tap_npc={tap_npc} "
-        f"tap_woyaoqu={tap_woyaoqu} target={coord} nav={nav_in_target}"
+    return _route_via_existing_route_and_npc(
+        route_name="route_to_longgong",
+        parent_route=route_to_donghaiwan,
+        parent_route_name="route_to_donghaiwan",
+        parent_fail_reason="route_to_donghaiwan_failed",
+        entry_coord_text=botconfig.DONGHAIWAN_TO_LONGGONG,
+        config_name="DONGHAIWAN_TO_LONGGONG",
+        npc_template=botconfig.ANDROID_TPL_NPC_LAOXIA,
+        target_coord=coord,
+        strategy="longgong",
+        entry_label="donghaiwan_to_longgong",
     )
-    return {
-        "ok": True,
-        "strategy": "longgong",
-        "coord": coord,
-    }
 
 
 def route_to_fangcun(coord: Tuple[int, int]) -> Dict[str, Any]:
-    if coord is None:
-        return {"ok": False, "reason": "missing_target_coord", "coord": coord}
-
-    routed = _route_via_single_transfer(
-        "长寿村",
-        botconfig.CHANGSHOU_TO_FANGCUN,
-        coord,
+    return _route_via_single_transfer_with_log(
+        route_name="route_to_fangcun",
+        start_destination="长寿村",
+        entry_coord_text=botconfig.CHANGSHOU_TO_FANGCUN,
+        target_coord=coord,
         strategy="fangcun",
+        entry_label="changshou_to_fangcun",
     )
-    if not bool(routed.get("ok")):
-        print(f"[route_to_fangcun] single_transfer failed reason={routed.get('reason')}")
-        return routed
-    print(
-        f"[route_to_fangcun] changshou_to_fangcun={routed.get('entry_coord')} "
-        f"tap_transfer={routed.get('tap_transfer')} target={coord} "
-        f"nav={routed.get('navigate_in_target')}"
-    )
-    return {
-        "ok": True,
-        "strategy": "fangcun",
-        "coord": coord,
-    }
 
 def route_to_changshoujiaowai(coord: Tuple[int, int]) -> Dict[str, Any]:
-    if coord is None:
-        return {"ok": False, "reason": "missing_target_coord", "coord": coord}
-
-    routed = _route_via_single_transfer(
-        "长寿村",
-        botconfig.CHANGSHOU_TO_CHANGSHOUJIAOWAI,
-        coord,
+    return _route_via_single_transfer_with_log(
+        route_name="route_to_changshoujiaowai",
+        start_destination="长寿村",
+        entry_coord_text=botconfig.CHANGSHOU_TO_CHANGSHOUJIAOWAI,
+        target_coord=coord,
         strategy="changshoujiaowai",
+        entry_label="changshou_to_changshoujiaowai",
     )
-    if not bool(routed.get("ok")):
-        print(f"[route_to_changshoujiaowai] single_transfer failed reason={routed.get('reason')}")
-        return routed
-    print(
-        f"[route_to_changshoujiaowai] changshou_to_changshoujiaowai={routed.get('entry_coord')} "
-        f"tap_transfer={routed.get('tap_transfer')} target={coord} "
-        f"nav={routed.get('navigate_in_target')}"
+
+def route_to_datangjingwai_via_guojing(coord: Tuple[int, int]) -> Dict[str, Any]:
+    return _route_via_existing_route_and_transfer(
+        route_name="route_to_datangjingwai_via_guojing",
+        parent_route=route_to_datangguojing,
+        parent_route_name="route_to_datangguojing",
+        parent_fail_reason="route_to_datangguojing_failed",
+        entry_coord_text=botconfig.GUOJING_TO_JINGWAI,
+        config_name="GUOJING_TO_JINGWAI",
+        target_coord=coord,
+        strategy="datangjingwai",
+        entry_label="guojing_to_jingwai",
     )
-    return {
-        "ok": True,
-        "strategy": "changshoujiaowai",
-        "coord": coord,
-    }
 
-# def route_to_wuzhuang(coord: Tuple[int, int]) -> Dict[str, Any]:
-#     routed = _route_via_jingwai_transfer(botconfig.JINGWAI_TO_WUHUANG, coord, strategy="wuzhuang")
-#     if not bool(routed.get("ok")):
-#         return routed
-#     routed["jingwai_to_wuzhuang"] = routed.pop("jingwai_entry_coord")
-#     routed["navigate_jingwai_to_wuzhuang_entry"] = routed.pop("navigate_jingwai_to_entry")
-#     routed["navigate_in_wuzhuang_to_target"] = routed.pop("navigate_in_target")
-#     return routed
 
-# def route_to_pansi(coord: Tuple[int, int]) -> Dict[str, Any]:
-#     routed = _route_via_jingwai_transfer(botconfig.JINGWAI_TO_PANSI, coord, strategy="pansi")
-#     if not bool(routed.get("ok")):
-#         return routed
-#     routed["jingwai_to_pansi"] = routed.pop("jingwai_entry_coord")
-#     routed["navigate_jingwai_to_pansi_entry"] = routed.pop("navigate_jingwai_to_entry")
-#     routed["navigate_in_pansi_to_target"] = routed.pop("navigate_in_target")
-#     return routed
+def route_to_wuzhuang(coord: Tuple[int, int]) -> Dict[str, Any]:
+    return _route_via_existing_route_and_transfer(
+        route_name="route_to_wuzhuang",
+        parent_route=route_to_datangjingwai_via_guojing,
+        parent_route_name="route_to_datangjingwai_via_guojing",
+        parent_fail_reason="route_to_datangjingwai_via_guojing_failed",
+        entry_coord_text=botconfig.JINGWAI_TO_WUZHUANG,
+        config_name="JINGWAI_TO_WUZHUANG",
+        target_coord=coord,
+        strategy="wuzhuang",
+        entry_label="jingwai_to_wuzhuang",
+    )
+
+def route_to_pansi(coord: Tuple[int, int]) -> Dict[str, Any]:
+    return _route_via_existing_route_and_transfer(
+        route_name="route_to_pansi",
+        parent_route=route_to_datangjingwai_via_guojing,
+        parent_route_name="route_to_datangjingwai_via_guojing",
+        parent_fail_reason="route_to_datangjingwai_via_guojing_failed",
+        entry_coord_text=botconfig.JINGWAI_TO_PANSI,
+        config_name="JINGWAI_TO_PANSI",
+        target_coord=coord,
+        strategy="pansi",
+        entry_label="jingwai_to_pansi",
+    )
 
 def route_to_huaguo(coord: Tuple[int, int]) -> Dict[str, Any]:
-    if coord is None:
-        return {"ok": False, "reason": "missing_target_coord", "coord": coord}
-
-    routed = _route_via_single_transfer(
-        "傲来国",
-        botconfig.AOLAI_TO_HUAGUO,
-        coord,
+    return _route_via_single_transfer_with_log(
+        route_name="route_to_huaguo",
+        start_destination="傲来国",
+        entry_coord_text=botconfig.AOLAI_TO_HUAGUO,
+        target_coord=coord,
         strategy="huaguo",
+        entry_label="aolai_to_huaguo",
     )
-    if not bool(routed.get("ok")):
-        print(f"[route_to_huaguo] single_transfer failed reason={routed.get('reason')}")
-        return routed
-    print(
-        f"[route_to_huaguo] aolai_to_huaguo={routed.get('entry_coord')} "
-        f"tap_transfer={routed.get('tap_transfer')} target={coord} "
-        f"nav={routed.get('navigate_in_target')}"
-    )
-    return {
-        "ok": True,
-        "strategy": "huaguo",
-        "coord": coord,
-    }
 
 def route_by_map(map_name: str, coord: Optional[Tuple[int, int]]) -> Dict[str, Any]:
     dest = str(map_name or "").strip()
-    if dest in ("狮驼岭"):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_shituo((int(coord[0]), int(coord[1])))
+    route_handlers = {
+        "狮驼岭": route_to_shituo,
+        "魔王寨": route_to_mowang,
+        "化生寺": route_to_huasheng,
+        "东海湾": route_to_donghaiwan,
+        "龙宫": route_to_longgong,
+        "东海龙宫": route_to_longgong,
+        "天宫": route_to_tiangong,
+        "女儿村": route_to_nver,
+        "大唐国境": route_to_datangguojing,
+        "江南野外": route_to_jiangnanyewai,
+        "普陀山": route_to_putuo,
+        "阴曹地府": route_to_difu,
+        "方寸山": route_to_fangcun,
+        "花果山": route_to_huaguo,
+        "长寿郊外": route_to_changshoujiaowai,
+        "大唐境外": route_to_datangjingwai_via_guojing,
+        "境外": route_to_datangjingwai_via_guojing,
+        "五庄观": route_to_wuzhuang,
+        "盘丝洞": route_to_pansi,
+        "盘丝岭": route_to_pansi,
+    }
+    if dest in route_handlers:
+        return _route_with_required_coord(map_name, coord, route_handlers[dest])
 
-    if dest in ("魔王寨"):
-        if coord is None:
+    if dest in ("建邺城", "长寿村", "朱紫国", "傲来国", "宝象国", "长安城", "西梁女国"):
+        normalized = _normalize_coord(coord)
+        if normalized is None:
             return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_mowang((int(coord[0]), int(coord[1])))
-
-    if dest in ("化生寺",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_huasheng((int(coord[0]), int(coord[1])))
-
-    if dest in ("东海湾",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_donghaiwan((int(coord[0]), int(coord[1])))
-
-    if dest in ("龙宫", "东海龙宫"):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_longgong((int(coord[0]), int(coord[1])))
-
-    if dest in ("天宫",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_tiangong((int(coord[0]), int(coord[1])))
-
-    if dest in ("女儿村",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_nver((int(coord[0]), int(coord[1])))
-
-    if dest in ("建邺城", "长寿村", "朱紫国", "傲来国", "宝象国", "长安城","西梁女国"):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return _route_via_direct_fly(dest, (int(coord[0]), int(coord[1])))
-
-    if dest in ("大唐国境"):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_datangguojing((int(coord[0]), int(coord[1])))
-
-    if dest in ("江南野外",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_jiangnanyewai((int(coord[0]), int(coord[1])))
-
-    if dest in ("普陀山",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_putuo((int(coord[0]), int(coord[1])))
-
-    if dest in ("阴曹地府",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_difu((int(coord[0]), int(coord[1])))
-
-    if dest in ("方寸山",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_fangcun((int(coord[0]), int(coord[1])))
-
-    if dest in ("花果山",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_huaguo((int(coord[0]), int(coord[1])))
-
-    if dest in ("长寿郊外",):
-        if coord is None:
-            return {"ok": False, "reason": "missing_target_coord", "map_name": map_name, "coord": coord}
-        return route_to_changshoujiaowai((int(coord[0]), int(coord[1])))
+        return _route_via_direct_fly(dest, normalized)
 
     return {"ok": False, "reason": "not_implemented", "map_name": map_name, "coord": coord}

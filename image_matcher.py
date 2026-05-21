@@ -290,5 +290,5 @@ def main():
 
 if __name__ == "__main__":
     # 直接运行该文件时执行 main()
-    print_clicked_pixel_coord("qizi.png")
-    # main()
+    # print_clicked_pixel_coord("qizi.png")
+    main()
