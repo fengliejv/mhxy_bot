@@ -1,6 +1,6 @@
 import re
 import time
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple
 
 import botconfig
 import adb_util
@@ -123,7 +123,7 @@ def enter_hotel() -> None:
 
 
 def receive_baotu_task() -> None:
-    max_retry = 5
+    max_retry = 3
     attempt_notes = []
     for i in range(1, max_retry + 1):
         _print_step("receive_baotu_task", f"attempt={i} start")
@@ -158,47 +158,24 @@ def receive_baotu_task() -> None:
 
 
 def close_to_xiaoer() -> None:
-    p_map_button = vision_bot.try_tap_best(
-        [botconfig.ANDROID_TPL_MAP_BUTTON, botconfig.ANDROID_TPL_MAP_BUTTON_2],
-        threshold=botconfig.ANDROID_THR_MAP_BUTTON,
+    vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
+    img_bgr = vision_bot.screenshot_bgr()
+    tap_info = vision_bot.tap_any_text_by_local_ocr(
+        image=img_bgr,
+        keywords=["店小二", "宝图任务"],
+        log_prefix="[datubot]",
     )
-    if p_map_button is None:
-        raise RuntimeError("地图按钮模板匹配失败")
-
-    vision_bot.tap_template(
-        botconfig.ANDROID_TPL_MAP_SEARCH_ICON,
-        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
-    )
-    vision_bot.tap_template(
-        botconfig.ANDROID_TPL_MAP_INPUT_ICON,
-        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
-    )
-
-    adb_util.ime_set(botconfig.ANDROID_ADB_IME_ID)
-    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
-    adb_util.adbkeyboard_input_text("店小二")
-    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
-    adb_util.ime_set(botconfig.ANDROID_SOGOU_IME_ID)
-    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
-
-    vision_bot.tap_template(
-        botconfig.ANDROID_TPL_MAP_ON_THE_WAY,
-        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
-    )
-    vision_bot.tap_template(
-        botconfig.ANDROID_TPL_MAP_EXIT,
-        threshold=botconfig.ANDROID_MATCH_THRESHOLD,
-    )
-    arrival = vision_bot.wait_until_arrived_by_coord()
+    vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
+    if not bool(tap_info.get("ok")):
+        raise RuntimeError(f"店小二/领取宝图任务 OCR 匹配失败: {tap_info}")
     _print_step(
         "close_to_xiaoer",
-        f"target=店小二 arrived={bool(arrival.get('arrived'))} coord={arrival.get('coord')} samples={arrival.get('samples')}",
+        f"keyword={tap_info.get('keyword')} text={tap_info.get('text')!r} center={tap_info.get('center')} tap={tap_info.get('tap')}",
     )
-    if not bool(arrival.get("arrived")):
-        raise RuntimeError(f"前往店小二失败: {arrival}")
 
 
 def capture_and_extract_baotu_llm() -> Tuple[str, str, Optional[Tuple[int, int]]]:
+    vision_bot.tap_screen_center(sleep_after=botconfig.ANDROID_STEP_SLEEP_S)
     img_bgr = vision_bot.screenshot_bgr()
     llm_baotu_info = extract_baotu_info(img_bgr)
     llm_parsed = llm_baotu_info.get("parsed") if isinstance(llm_baotu_info, dict) else None
@@ -302,12 +279,16 @@ def excute_datu_once() -> None:
 
 
 def main() -> None:
-    sys_util.clear_debug_capture()
+    # sys_util.clear_debug_capture()
     botconfig.init()
-    resp = run_local_ocr("assets/materia/xiaorenwu.jpg", use_det=True, use_cls=False, use_rec=True, log_prefix="[vision_bot]")
+    # resp = run_local_ocr("assets/materia/xiaorenwu.jpg", use_det=True, use_cls=False, use_rec=True, log_prefix="[vision_bot]")
+    receive_baotu_task()
+    # goto_changan_jiudian()
+
+
 
     # matched = vision_bot.find_text_by_local_ocr("assets/materia/xiaorenwu.jpg", "店小二")
-    print(resp)
+    # print(resp)
     # out = excute_datu_once()
     # route_strategies.route_by_map("化生寺", (60,55))
     # print(plan)

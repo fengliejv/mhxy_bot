@@ -58,6 +58,40 @@ def _image_to_bgr(image: Any) -> np.ndarray:
     raise RuntimeError(f"不支持的图片输入类型: {type(image)!r}")
 
 
+def _mask_to_ocr_bgr(mask: np.ndarray) -> np.ndarray:
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    mask = cv2.dilate(mask, kernel, iterations=1)
+    return cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+
+
+def _build_text_ocr_variants(image: Any) -> Sequence[Dict[str, Any]]:
+    img_bgr = _image_to_bgr(image)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+
+    # Normalize overall contrast first so OCR can benefit even when color is not distinctive.
+    gray_eq = cv2.equalizeHist(gray)
+    _, gray_bin = cv2.threshold(gray_eq, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Split bright text into generic color families instead of hard-coding a specific word color.
+    white_mask = cv2.inRange(hsv, (0, 0, 170), (180, 85, 255))
+    warm_mask = cv2.inRange(hsv, (8, 60, 120), (45, 255, 255))
+    cool_mask = cv2.inRange(hsv, (70, 60, 120), (140, 255, 255))
+
+    variants = [
+        {"name": "original", "image": img_bgr},
+        {"name": "gray_bin", "image": _mask_to_ocr_bgr(gray_bin)},
+        {"name": "bright_text", "image": _mask_to_ocr_bgr(cv2.bitwise_or(white_mask, cv2.bitwise_or(warm_mask, cool_mask)))},
+        {"name": "warm_text", "image": _mask_to_ocr_bgr(cv2.bitwise_or(warm_mask, white_mask))},
+        {"name": "cool_text", "image": _mask_to_ocr_bgr(cv2.bitwise_or(cool_mask, white_mask))},
+    ]
+    if bool(botconfig.is_debug()):
+        for item in variants[1:]:
+            sys_util.save_debug_image(item["image"], f"text_ocr_variant_{item['name']}")
+    return variants
+
+
 def _pick_best_text_match(candidates: Sequence[Dict[str, Any]], keyword: str) -> Optional[Dict[str, Any]]:
     target = _normalize_ocr_text(keyword)
     if not target:
@@ -80,11 +114,7 @@ def _pick_best_text_match(candidates: Sequence[Dict[str, Any]], keyword: str) ->
     return matched[0]
 
 
-def find_text_by_local_ocr(image: Any, keyword: str) -> Optional[Dict[str, Any]]:
-    resp = run_local_ocr(image, use_det=True, use_cls=False, use_rec=True, log_prefix="[vision_bot]")
-    result = resp.get("result")
-    debug_img = _image_to_bgr(image)
-
+def _collect_text_ocr_candidates(result: Any) -> Sequence[Dict[str, Any]]:
     candidates = []
     for item in result or []:
         if not isinstance(item, Sequence) or len(item) < 3:
@@ -105,6 +135,88 @@ def find_text_by_local_ocr(image: Any, keyword: str) -> Optional[Dict[str, Any]]
         cx = int(round(sum(x for x, _ in pts) / len(pts)))
         cy = int(round(sum(y for _, y in pts) / len(pts)))
         candidates.append({"text": text, "score": score, "box": pts, "center": (cx, cy)})
+    return candidates
+
+
+def _collect_text_ocr_candidates_from_variants(image: Any, log_prefix: str) -> Sequence[Dict[str, Any]]:
+    merged = []
+    seen = set()
+    for variant in _build_text_ocr_variants(image):
+        variant_name = str(variant["name"])
+        resp = run_local_ocr(variant["image"], use_det=True, use_cls=False, use_rec=True, log_prefix=f"{log_prefix}[{variant_name}]")
+        variant_candidates = _collect_text_ocr_candidates(resp.get("result"))
+        texts = [item["text"] for item in variant_candidates]
+        print(f"{log_prefix} local_text_ocr variant={variant_name} texts={texts}")
+        for item in variant_candidates:
+            key = (
+                _normalize_ocr_text(item.get("text", "")),
+                int(item["center"][0]),
+                int(item["center"][1]),
+            )
+            existed = seen.__contains__(key)
+            if not existed:
+                seen.add(key)
+            merged.append(
+                {
+                    **item,
+                    "variant": variant_name,
+                    "variant_duplicate": existed,
+                }
+            )
+    return merged
+
+
+def match_any_text_by_local_ocr(
+    image: Any,
+    keywords: Sequence[str],
+    log_prefix: str = "[vision_bot]",
+) -> Dict[str, Any]:
+    candidates = _collect_text_ocr_candidates_from_variants(image, log_prefix=log_prefix)
+    texts = [item["text"] for item in candidates]
+    print(f"{log_prefix} local_text_ocr texts={texts}")
+
+    for keyword in keywords:
+        best = _pick_best_text_match(candidates, keyword)
+        if best is None:
+            continue
+        print(
+            f"{log_prefix} local_text_ocr match keyword={keyword!r} text={best['text']!r} "
+            f"score={best['score']:.3f} center={best['center']} variant={best.get('variant')}"
+        )
+        return {"ok": True, "keyword": keyword, "best": best, "texts": texts}
+
+    print(f"{log_prefix} local_text_ocr no_match keywords={list(keywords)!r}")
+    return {"ok": False, "keywords": list(keywords), "texts": texts}
+
+
+def tap_any_text_by_local_ocr(
+    image: Any,
+    keywords: Sequence[str],
+    extra_offset: Tuple[int, int] = (0, 0),
+    log_prefix: str = "[vision_bot]",
+) -> Dict[str, Any]:
+    matched = match_any_text_by_local_ocr(image, keywords=keywords, log_prefix=log_prefix)
+    if not bool(matched.get("ok")):
+        return matched
+
+    best = matched["best"]
+    center = best["center"]
+    tap_pt = (int(center[0]) + int(extra_offset[0]), max(0, int(center[1]) + int(extra_offset[1])))
+    adb_util.tap(tap_pt[0], tap_pt[1])
+    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
+    return {
+        "ok": True,
+        "keyword": matched.get("keyword"),
+        "text": best.get("text"),
+        "score": float(best.get("score", 0.0)),
+        "center": center,
+        "tap": tap_pt,
+    }
+
+
+def find_text_by_local_ocr(image: Any, keyword: str) -> Optional[Dict[str, Any]]:
+    debug_img = _image_to_bgr(image)
+    candidates = _collect_text_ocr_candidates_from_variants(image, log_prefix="[vision_bot]")
 
     print(f"[vision_bot] local_text_ocr texts={[item['text'] for item in candidates]}")
     best = _pick_best_text_match(candidates, keyword)
@@ -113,7 +225,7 @@ def find_text_by_local_ocr(image: Any, keyword: str) -> Optional[Dict[str, Any]]
         return None
     print(
         f"[vision_bot] local_text_ocr match keyword={keyword!r} text={best['text']!r} "
-        f"score={best['score']:.3f} center={best['center']}"
+        f"score={best['score']:.3f} center={best['center']} variant={best.get('variant')}"
     )
     debug_draw = debug_img.copy()
     box = np.asarray(best["box"], dtype=np.int32).reshape((-1, 1, 2))

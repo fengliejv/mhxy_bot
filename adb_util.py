@@ -1,16 +1,28 @@
+import io
 import subprocess
+import threading
 from typing import Optional, Sequence, Tuple
+
+try:
+    import scrcpy
+except Exception:
+    scrcpy = None
 
 import cv2
 import numpy as np
 from PIL import Image
-import io
 
 import botconfig
 import sys_util
 
 _ADB_PATH: Optional[str] = None
 _ADB_SERIAL: Optional[str] = None
+_SCRCPY_CLIENT = None
+_SCRCPY_SERIAL: Optional[str] = None
+_SCRCPY_LAST_FRAME: Optional[np.ndarray] = None
+_SCRCPY_FRAME_LOCK = threading.Lock()
+_SCRCPY_FRAME_READY = threading.Event()
+_SCRCPY_WARNED = False
 
 
 def _auto_pick_serial(adb_path: str) -> Optional[str]:
@@ -44,6 +56,8 @@ def _restart_server(adb_path: str) -> None:
 
 def init_adb(serial: Optional[str] = None, adb_path: Optional[str] = None) -> Tuple[str, Optional[str]]:
     global _ADB_PATH, _ADB_SERIAL
+    prev_adb_path = _ADB_PATH
+    prev_serial = _ADB_SERIAL
     resolved_adb_path = str(adb_path or botconfig.ADB_PATH or "adb").strip() or "adb"
     env_serial = botconfig.ADB_SERIAL
     resolved_serial = str(serial or env_serial or "").strip() or None
@@ -51,6 +65,8 @@ def init_adb(serial: Optional[str] = None, adb_path: Optional[str] = None) -> Tu
         resolved_serial = _auto_pick_serial(resolved_adb_path)
     _ADB_PATH = resolved_adb_path
     _ADB_SERIAL = resolved_serial
+    if prev_adb_path != resolved_adb_path or prev_serial != resolved_serial:
+        _stop_scrcpy_client()
     return _ADB_PATH, _ADB_SERIAL
 
 
@@ -104,7 +120,23 @@ def _run_checked(args: Sequence[str], action: str, timeout_s: float = 15.0) -> s
     return cp
 
 
-def screenshot_png() -> bytes:
+def _decode_png_bgr(png: bytes) -> np.ndarray:
+    buf = np.frombuffer(png, dtype=np.uint8)
+    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    if img is None:
+        try:
+            pil_img = Image.open(io.BytesIO(png))
+            pil_img = pil_img.convert("RGB")
+            rgb = np.array(pil_img)
+            img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        except Exception:
+            img = None
+    if img is None:
+        raise RuntimeError("截图解码失败")
+    return img
+
+
+def _adb_screenshot_png() -> bytes:
     cp = _run_checked(["exec-out", "screencap", "-p"], "adb screencap", timeout_s=30.0)
     if not cp.stdout:
         raise RuntimeError("adb screencap 失败: 空输出")
@@ -121,21 +153,130 @@ def screenshot_png() -> bytes:
     return data
 
 
-def screenshot_bgr() -> np.ndarray:
-    png = screenshot_png()
-    buf = np.frombuffer(png, dtype=np.uint8)
-    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    if img is None:
+def _adb_screenshot_bgr() -> np.ndarray:
+    return _decode_png_bgr(_adb_screenshot_png())
+
+
+def _screenshot_backend() -> str:
+    backend = str(getattr(botconfig, "ANDROID_SCREENSHOT_BACKEND", "auto") or "auto").strip().lower()
+    if backend not in {"auto", "adb", "scrcpy"}:
+        raise RuntimeError(f"不支持的截图后端: {backend}")
+    return backend
+
+
+def _warn_scrcpy_fallback(reason: str) -> None:
+    global _SCRCPY_WARNED
+    if _SCRCPY_WARNED:
+        return
+    _SCRCPY_WARNED = True
+    print(f"[adb_util] scrcpy 不可用，回退 adb 截图: {reason}")
+
+
+def _stop_scrcpy_client() -> None:
+    global _SCRCPY_CLIENT, _SCRCPY_SERIAL, _SCRCPY_LAST_FRAME
+    with _SCRCPY_FRAME_LOCK:
+        client = _SCRCPY_CLIENT
+        _SCRCPY_CLIENT = None
+        _SCRCPY_SERIAL = None
+        _SCRCPY_LAST_FRAME = None
+        _SCRCPY_FRAME_READY.clear()
+    if client is not None:
         try:
-            pil_img = Image.open(io.BytesIO(png))
-            pil_img = pil_img.convert("RGB")
-            rgb = np.array(pil_img)
-            img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            client.stop()
         except Exception:
-            img = None
-    if img is None:
-        raise RuntimeError("截图解码失败")
-    return img
+            pass
+
+
+def _on_scrcpy_frame(frame) -> None:
+    global _SCRCPY_LAST_FRAME
+    if frame is None:
+        return
+    with _SCRCPY_FRAME_LOCK:
+        _SCRCPY_LAST_FRAME = frame.copy()
+        _SCRCPY_FRAME_READY.set()
+
+
+def _ensure_scrcpy_client():
+    global _SCRCPY_CLIENT, _SCRCPY_SERIAL
+    if scrcpy is None:
+        raise RuntimeError("缺少 scrcpy 依赖，请先安装: pip install scrcpy-client")
+    _, serial = _ensure_adb()
+    with _SCRCPY_FRAME_LOCK:
+        client = _SCRCPY_CLIENT
+        if client is not None and _SCRCPY_SERIAL == serial and bool(getattr(client, "alive", False)):
+            return client
+    _stop_scrcpy_client()
+    _SCRCPY_FRAME_READY.clear()
+    client = scrcpy.Client(
+        device=serial if serial else None,
+        max_width=int(botconfig.ANDROID_SCRCPY_MAX_WIDTH),
+        bitrate=int(botconfig.ANDROID_SCRCPY_BITRATE),
+        max_fps=int(botconfig.ANDROID_SCRCPY_MAX_FPS),
+        connection_timeout=int(botconfig.ANDROID_SCRCPY_CONNECTION_TIMEOUT_MS),
+    )
+    client.add_listener(scrcpy.EVENT_FRAME, _on_scrcpy_frame)
+    client.start(threaded=True)
+    with _SCRCPY_FRAME_LOCK:
+        _SCRCPY_CLIENT = client
+        _SCRCPY_SERIAL = serial
+    wait_timeout_s = max(2.0, float(botconfig.ANDROID_SCRCPY_CONNECTION_TIMEOUT_MS) / 1000.0 + 1.0)
+    if _SCRCPY_FRAME_READY.wait(timeout=wait_timeout_s):
+        return client
+    if getattr(client, "last_frame", None) is not None:
+        _on_scrcpy_frame(client.last_frame)
+        return client
+    _stop_scrcpy_client()
+    raise RuntimeError("scrcpy 启动成功但未收到首帧")
+
+
+def _scrcpy_screenshot_bgr() -> np.ndarray:
+    client = _ensure_scrcpy_client()
+    frame = getattr(client, "last_frame", None)
+    if frame is None:
+        if not _SCRCPY_FRAME_READY.wait(timeout=1.0):
+            raise RuntimeError("scrcpy 未返回视频帧")
+        with _SCRCPY_FRAME_LOCK:
+            frame = None if _SCRCPY_LAST_FRAME is None else _SCRCPY_LAST_FRAME.copy()
+    else:
+        frame = frame.copy()
+    if frame is None:
+        raise RuntimeError("scrcpy 视频帧为空")
+    sys_util.save_debug_image(frame, "android_scrcpy")
+    return frame
+
+
+def _scrcpy_screenshot_png() -> bytes:
+    img = _scrcpy_screenshot_bgr()
+    ok, buf = cv2.imencode(".png", img)
+    if not ok:
+        raise RuntimeError("scrcpy 截图转 PNG 失败")
+    return bytes(buf)
+
+
+def screenshot_png() -> bytes:
+    backend = _screenshot_backend()
+    if backend == "adb":
+        return _adb_screenshot_png()
+    if backend == "scrcpy":
+        return _scrcpy_screenshot_png()
+    try:
+        return _scrcpy_screenshot_png()
+    except Exception as exc:
+        _warn_scrcpy_fallback(str(exc))
+        return _adb_screenshot_png()
+
+
+def screenshot_bgr() -> np.ndarray:
+    backend = _screenshot_backend()
+    if backend == "adb":
+        return _adb_screenshot_bgr()
+    if backend == "scrcpy":
+        return _scrcpy_screenshot_bgr()
+    try:
+        return _scrcpy_screenshot_bgr()
+    except Exception as exc:
+        _warn_scrcpy_fallback(str(exc))
+        return _adb_screenshot_bgr()
 
 
 def tap(x: int, y: int) -> None:

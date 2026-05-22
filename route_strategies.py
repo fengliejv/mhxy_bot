@@ -442,13 +442,18 @@ def route_to_jiangnanyewai(coord: Tuple[int, int]) -> Dict[str, Any]:
     if not bool(flag_entry.get("ok")):
         return flag_entry
 
+    changan_to_jiangnanyewai = _navigate_to_config_coord(botconfig.CHANGAN_TO_JIANGNANYEWAI)
+
     tap_transfer = _tap_system_transfer_once()
     if tap_transfer is None:
         print("[route_to_jiangnanyewai] transfer_not_found")
         return {"ok": False, "reason": "transfer_not_found"}
 
     vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
-    print(f"[route_to_jiangnanyewai] tap_transfer={tap_transfer} target={coord}")
+    print(
+        f"[route_to_jiangnanyewai] changan_to_jiangnanyewai={changan_to_jiangnanyewai} "
+        f"tap_transfer={tap_transfer} target={coord}"
+    )
     return _success_result("jiangnanyewai", coord)
 
 
