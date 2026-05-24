@@ -303,6 +303,14 @@ def ime_set(ime_id: str) -> None:
     _run_checked(["shell", "ime", "set", ime_id], "adb ime set", timeout_s=15.0)
 
 
+def ime_get_current() -> str:
+    cp = _run(["shell", "settings", "get", "secure", "default_input_method"], timeout_s=15.0)
+    if cp.returncode != 0:
+        err = _stderr_text(cp)
+        raise RuntimeError(f"获取当前输入法失败: rc={cp.returncode} {err}".strip())
+    return ((cp.stdout or b"").decode("utf-8", errors="replace")).strip()
+
+
 def adbkeyboard_input_text(text: str) -> None:
     msg = str(text)
     _run_checked(["shell", "am", "broadcast", "-a", "ADB_INPUT_TEXT", "--es", "msg", msg], "adbkeyboard 输入", timeout_s=15.0)

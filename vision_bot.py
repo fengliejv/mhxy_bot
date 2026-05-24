@@ -65,31 +65,23 @@ def _mask_to_ocr_bgr(mask: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
 
 
-def _build_text_ocr_variants(image: Any) -> Sequence[Dict[str, Any]]:
-    img_bgr = _image_to_bgr(image)
+def _build_text_ocr_variant_map(img_bgr: np.ndarray) -> Dict[str, np.ndarray]:
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-    # Normalize overall contrast first so OCR can benefit even when color is not distinctive.
     gray_eq = cv2.equalizeHist(gray)
     _, gray_bin = cv2.threshold(gray_eq, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # Split bright text into generic color families instead of hard-coding a specific word color.
     white_mask = cv2.inRange(hsv, (0, 0, 170), (180, 85, 255))
-    warm_mask = cv2.inRange(hsv, (8, 60, 120), (45, 255, 255))
-    cool_mask = cv2.inRange(hsv, (70, 60, 120), (140, 255, 255))
+    yellow_mask = cv2.inRange(hsv, (12, 80, 130), (42, 255, 255))
+    blue_purple_mask = cv2.inRange(hsv, (100, 60, 90), (165, 255, 255))
 
-    variants = [
-        {"name": "original", "image": img_bgr},
-        {"name": "gray_bin", "image": _mask_to_ocr_bgr(gray_bin)},
-        {"name": "bright_text", "image": _mask_to_ocr_bgr(cv2.bitwise_or(white_mask, cv2.bitwise_or(warm_mask, cool_mask)))},
-        {"name": "warm_text", "image": _mask_to_ocr_bgr(cv2.bitwise_or(warm_mask, white_mask))},
-        {"name": "cool_text", "image": _mask_to_ocr_bgr(cv2.bitwise_or(cool_mask, white_mask))},
-    ]
-    if bool(botconfig.is_debug()):
-        for item in variants[1:]:
-            sys_util.save_debug_image(item["image"], f"text_ocr_variant_{item['name']}")
-    return variants
+    return {
+        "original": img_bgr,
+        "gray_bin": _mask_to_ocr_bgr(gray_bin),
+        "yellow_text": _mask_to_ocr_bgr(cv2.bitwise_or(yellow_mask, white_mask)),
+        "blue_purple_text": _mask_to_ocr_bgr(cv2.bitwise_or(blue_purple_mask, white_mask)),
+    }
 
 
 def _pick_best_text_match(candidates: Sequence[Dict[str, Any]], keyword: str) -> Optional[Dict[str, Any]]:
@@ -138,12 +130,23 @@ def _collect_text_ocr_candidates(result: Any) -> Sequence[Dict[str, Any]]:
     return candidates
 
 
-def _collect_text_ocr_candidates_from_variants(image: Any, log_prefix: str) -> Sequence[Dict[str, Any]]:
+def _collect_text_ocr_candidates_from_variants(
+    image: Any,
+    log_prefix: str,
+    variant_names: Optional[Sequence[str]] = None,
+) -> Sequence[Dict[str, Any]]:
+    img_bgr = _image_to_bgr(image)
+    variant_map = _build_text_ocr_variant_map(img_bgr)
+    selected_variant_names = list(variant_names or ("original", "gray_bin"))
     merged = []
     seen = set()
-    for variant in _build_text_ocr_variants(image):
-        variant_name = str(variant["name"])
-        resp = run_local_ocr(variant["image"], use_det=True, use_cls=False, use_rec=True, log_prefix=f"{log_prefix}[{variant_name}]")
+    for variant_name in selected_variant_names:
+        variant_image = variant_map.get(str(variant_name))
+        if variant_image is None:
+            continue
+        if bool(botconfig.is_debug()) and variant_name != "original":
+            sys_util.save_debug_image(variant_image, f"text_ocr_variant_{variant_name}")
+        resp = run_local_ocr(variant_image, use_det=True, use_cls=False, use_rec=True, log_prefix=f"{log_prefix}[{variant_name}]")
         variant_candidates = _collect_text_ocr_candidates(resp.get("result"))
         texts = [item["text"] for item in variant_candidates]
         print(f"{log_prefix} local_text_ocr variant={variant_name} texts={texts}")
@@ -170,12 +173,24 @@ def match_any_text_by_local_ocr(
     image: Any,
     keywords: Sequence[str],
     log_prefix: str = "[vision_bot]",
+    variant_names_by_keyword: Optional[Dict[str, Sequence[str]]] = None,
 ) -> Dict[str, Any]:
-    candidates = _collect_text_ocr_candidates_from_variants(image, log_prefix=log_prefix)
-    texts = [item["text"] for item in candidates]
-    print(f"{log_prefix} local_text_ocr texts={texts}")
-
+    variant_cache: Dict[str, Sequence[Dict[str, Any]]] = {}
+    all_texts = []
     for keyword in keywords:
+        variant_names = tuple((variant_names_by_keyword or {}).get(keyword) or ("original", "gray_bin"))
+        candidates = []
+        for variant_name in variant_names:
+            if variant_name not in variant_cache:
+                variant_cache[variant_name] = _collect_text_ocr_candidates_from_variants(
+                    image,
+                    log_prefix=log_prefix,
+                    variant_names=(variant_name,),
+                )
+            candidates.extend(variant_cache[variant_name])
+        texts = [item["text"] for item in candidates]
+        all_texts.extend(texts)
+        print(f"{log_prefix} local_text_ocr keyword={keyword!r} variants={list(variant_names)!r} texts={texts}")
         best = _pick_best_text_match(candidates, keyword)
         if best is None:
             continue
@@ -183,10 +198,10 @@ def match_any_text_by_local_ocr(
             f"{log_prefix} local_text_ocr match keyword={keyword!r} text={best['text']!r} "
             f"score={best['score']:.3f} center={best['center']} variant={best.get('variant')}"
         )
-        return {"ok": True, "keyword": keyword, "best": best, "texts": texts}
+        return {"ok": True, "keyword": keyword, "best": best, "texts": all_texts}
 
     print(f"{log_prefix} local_text_ocr no_match keywords={list(keywords)!r}")
-    return {"ok": False, "keywords": list(keywords), "texts": texts}
+    return {"ok": False, "keywords": list(keywords), "texts": all_texts}
 
 
 def tap_any_text_by_local_ocr(
@@ -194,8 +209,14 @@ def tap_any_text_by_local_ocr(
     keywords: Sequence[str],
     extra_offset: Tuple[int, int] = (0, 0),
     log_prefix: str = "[vision_bot]",
+    variant_names_by_keyword: Optional[Dict[str, Sequence[str]]] = None,
 ) -> Dict[str, Any]:
-    matched = match_any_text_by_local_ocr(image, keywords=keywords, log_prefix=log_prefix)
+    matched = match_any_text_by_local_ocr(
+        image,
+        keywords=keywords,
+        log_prefix=log_prefix,
+        variant_names_by_keyword=variant_names_by_keyword,
+    )
     if not bool(matched.get("ok")):
         return matched
 
@@ -216,9 +237,10 @@ def tap_any_text_by_local_ocr(
 
 def find_text_by_local_ocr(image: Any, keyword: str) -> Optional[Dict[str, Any]]:
     debug_img = _image_to_bgr(image)
-    candidates = _collect_text_ocr_candidates_from_variants(image, log_prefix="[vision_bot]")
+    variant_names = ("original", "gray_bin")
+    candidates = _collect_text_ocr_candidates_from_variants(image, log_prefix="[vision_bot]", variant_names=variant_names)
 
-    print(f"[vision_bot] local_text_ocr texts={[item['text'] for item in candidates]}")
+    print(f"[vision_bot] local_text_ocr keyword={keyword!r} variants={list(variant_names)!r} texts={[item['text'] for item in candidates]}")
     best = _pick_best_text_match(candidates, keyword)
     if best is None:
         print(f"[vision_bot] local_text_ocr no_match keyword={keyword!r}")
@@ -245,6 +267,50 @@ def find_text_by_local_ocr(image: Any, keyword: str) -> Optional[Dict[str, Any]]
     return best
 
 
+def _number_keyboard_template(name: str) -> str:
+    return f"assets/android/keyboard/number/{name}.png"
+
+
+def _tap_number_keyboard_key(key: str, threshold: Optional[float] = None) -> Dict[str, Any]:
+    key_name = str(key)
+    if key_name not in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "delete", "confirm"):
+        raise RuntimeError(f"不支持的数字键盘按键: {key_name}")
+    template_path = _number_keyboard_template(key_name)
+    img_bgr = screenshot_bgr()
+    matched = match_once(img_bgr, template_path, threshold=threshold)
+    if matched is None:
+        raise RuntimeError(f"数字键盘模板匹配失败: {template_path}")
+    top_left, confidence = matched
+    tap_pt = tap_matched_center(template_path, top_left)
+    time.sleep(botconfig.ANDROID_STEP_SLEEP_S)
+    return {
+        "key": key_name,
+        "template": template_path,
+        "confidence": float(confidence),
+        "tap": tap_pt,
+    }
+
+
+def _input_with_number_keyboard(value: int, clear_times: int = 6) -> Dict[str, Any]:
+    text = str(int(value))
+    if not text.isdigit():
+        raise RuntimeError(f"数字键盘仅支持纯数字输入: {text!r}")
+    threshold = botconfig.ANDROID_MATCH_THRESHOLD
+    clear_results = []
+    for _ in range(max(0, int(clear_times))):
+        clear_results.append(_tap_number_keyboard_key("delete", threshold=threshold))
+    digit_results = []
+    for ch in text:
+        digit_results.append(_tap_number_keyboard_key(ch, threshold=threshold))
+    confirm_result = _tap_number_keyboard_key("confirm", threshold=threshold)
+    return {
+        "value": text,
+        "clear_taps": [item["tap"] for item in clear_results],
+        "digit_taps": [item["tap"] for item in digit_results],
+        "confirm_tap": confirm_result["tap"],
+    }
+
+
 def navigate_to_coord(x: int, y: int) -> Dict[str, Any]:
     step_sleep_s = botconfig.ANDROID_STEP_SLEEP_S
     thr_map_button = botconfig.ANDROID_THR_MAP_BUTTON
@@ -266,22 +332,14 @@ def navigate_to_coord(x: int, y: int) -> Dict[str, Any]:
     map_button_tpl = str(matched_map_btn["template"])
     map_button_conf = float(matched_map_btn["confidence"])
     tap_map_button = tap_matched_center(map_button_tpl, matched_map_btn["top_left"])
-
-    adb_ime = botconfig.ANDROID_ADB_IME_ID
-    sogou_ime = botconfig.ANDROID_SOGOU_IME_ID
-    adb_util.ime_set(adb_ime)
     time.sleep(step_sleep_s)
     tap_x = tap_template(tpl_map_x, threshold=thr_map_x)
     time.sleep(step_sleep_s)
-    adb_util.adbkeyboard_input_text(str(int(x)))
+    input_x = _input_with_number_keyboard(int(x))
     time.sleep(step_sleep_s)
-
     tap_y = tap_template(tpl_map_y, threshold=thr_map_y)
     time.sleep(step_sleep_s)
-    adb_util.adbkeyboard_input_text(str(int(y)))
-    time.sleep(step_sleep_s)
-
-    adb_util.ime_set(sogou_ime)
+    input_y = _input_with_number_keyboard(int(y))
     time.sleep(step_sleep_s)
 
     tap_go = tap_template(tpl_map_go, threshold=thr_map_go)
@@ -297,7 +355,7 @@ def navigate_to_coord(x: int, y: int) -> Dict[str, Any]:
     print(
         f"[vision_bot] navigate_to_coord target=({int(x)}, {int(y)}) "
         f"map_button={map_button_tpl} map_button_conf={map_button_conf:.3f} "
-        f"tap_map_button={tap_map_button} tap_x={tap_x} tap_y={tap_y} tap_go={tap_go} "
+        f"tap_map_button={tap_map_button} tap_x={tap_x} input_x={input_x} tap_y={tap_y} input_y={input_y} tap_go={tap_go} "
         f"arrived={bool(arrival.get('arrived'))} coord={arrival.get('coord')} samples={arrival.get('samples')} "
         f"tap_map_exit={tap_exit} tap_map_exit_error={exit_error}"
     )
@@ -367,3 +425,6 @@ def detect_current_map_by_roi() -> Dict[str, Any]:
     map_name = flatten_ocr_text(ocr_result.get("result"))
     print(f"[vision_bot] current_map raw_text={map_name!r}")
     return {"map_name": map_name, "raw_ocr": ocr_result, "roi": list(roi)}
+
+# botconfig.init()
+# _input_with_number_keyboard(124)

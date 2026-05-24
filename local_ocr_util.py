@@ -16,9 +16,24 @@ _OCR_ENGINE = None
 def _load_image(image: Any) -> Image.Image:
     if isinstance(image, Image.Image):
         return image.convert("RGB")
-    path = os.path.expanduser(str(image))
-    with Image.open(path) as img:
-        return img.convert("RGB")
+    if isinstance(image, str):
+        path = os.path.expanduser(str(image))
+        with Image.open(path) as img:
+            return img.convert("RGB")
+    if isinstance(image, (bytes, bytearray, memoryview)):
+        with Image.open(io.BytesIO(bytes(image))) as img:
+            return img.convert("RGB")
+    if hasattr(image, "shape") and hasattr(image, "dtype"):
+        try:
+            import numpy as np  # type: ignore
+        except Exception as e:
+            raise RuntimeError("ndarray 图片输入需要 numpy") from e
+        arr = np.asarray(image)
+        if arr.ndim == 2:
+            return Image.fromarray(arr).convert("RGB")
+        if arr.ndim == 3 and arr.shape[2] in (3, 4):
+            return Image.fromarray(arr).convert("RGB")
+    raise RuntimeError(f"不支持的图片输入类型: {type(image)!r}")
 
 
 def _to_png_bytes(img: Image.Image) -> bytes:

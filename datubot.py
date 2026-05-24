@@ -1,6 +1,6 @@
 import re
 import time
-from typing import Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import botconfig
 import adb_util
@@ -15,6 +15,13 @@ from roi_util import parse_roi
 
 def _print_step(name: str, detail: str) -> None:
     print(f"[datubot] {name}: {detail}")
+
+
+def _xiaoer_ocr_variant_plan() -> Dict[str, Sequence[str]]:
+    return {
+        "店小二": ("yellow_text",),
+        "宝图任务": ("blue_purple_text",),
+    }
 
 
 def _detect_battle_timer_text() -> str:
@@ -158,24 +165,40 @@ def receive_baotu_task() -> None:
 
 
 def close_to_xiaoer() -> None:
+    started_at = time.perf_counter()
     vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_EXPAND, threshold=botconfig.ANDROID_THR_SYSTEM_EXPAND)
     img_bgr = vision_bot.screenshot_bgr()
+    ocr_started_at = time.perf_counter()
     tap_info = vision_bot.tap_any_text_by_local_ocr(
         image=img_bgr,
         keywords=["店小二", "宝图任务"],
         log_prefix="[datubot]",
+        variant_names_by_keyword=_xiaoer_ocr_variant_plan(),
     )
+    ocr_elapsed_s = time.perf_counter() - ocr_started_at
     vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
     if not bool(tap_info.get("ok")):
-        raise RuntimeError(f"店小二/领取宝图任务 OCR 匹配失败: {tap_info}")
+        total_elapsed_s = time.perf_counter() - started_at
+        print(
+            f"店小二/领取宝图任务 OCR 匹配失败: {tap_info} "
+            f"ocr_elapsed_s={ocr_elapsed_s:.3f} total_elapsed_s={total_elapsed_s:.3f}"
+        )
+        return
+    click_elapsed_s = tap_info.get("elapsed_s")
+    total_elapsed_s = time.perf_counter() - started_at
+    time.sleep(1)
     _print_step(
         "close_to_xiaoer",
-        f"keyword={tap_info.get('keyword')} text={tap_info.get('text')!r} center={tap_info.get('center')} tap={tap_info.get('tap')}",
+        f"keyword={tap_info.get('keyword')} text={tap_info.get('text')!r} "
+        f"center={tap_info.get('center')} tap={tap_info.get('tap')} "
+        f"ocr_elapsed_s={ocr_elapsed_s:.3f} click_elapsed_s={float(click_elapsed_s or 0.0):.3f} "
+        f"total_elapsed_s={total_elapsed_s:.3f}",
     )
 
 
 def capture_and_extract_baotu_llm() -> Tuple[str, str, Optional[Tuple[int, int]]]:
     vision_bot.tap_screen_center(sleep_after=botconfig.ANDROID_STEP_SLEEP_S)
+    vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
     img_bgr = vision_bot.screenshot_bgr()
     llm_baotu_info = extract_baotu_info(img_bgr)
     llm_parsed = llm_baotu_info.get("parsed") if isinstance(llm_baotu_info, dict) else None
@@ -279,10 +302,11 @@ def excute_datu_once() -> None:
 
 
 def main() -> None:
-    # sys_util.clear_debug_capture()
+    sys_util.clear_debug_capture()
     botconfig.init()
     # resp = run_local_ocr("assets/materia/xiaorenwu.jpg", use_det=True, use_cls=False, use_rec=True, log_prefix="[vision_bot]")
-    receive_baotu_task()
+    # llm_qiangdao_name, llm_map_name, llm_coord = capture_and_extract_baotu_llm()
+    route_to_target("普陀山",(20,39))
     # goto_changan_jiudian()
 
 

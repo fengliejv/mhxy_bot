@@ -418,8 +418,9 @@ def route_to_datangguojing(coord: Tuple[int, int]) -> Dict[str, Any]:
         if tap_expand is not None
         else None
     )
-    tap_npc = operator_util.tap_template(botconfig.ANDROID_TPL_NPC_CHANGAN_YIZHANLAOBAN)
+    tap_npc = operator_util.tap_template(botconfig.ANDROID_TPL_NPC_CHANGAN_YIZHANLAOBAN, threshold=0.3)
     tap_woyaoqu = operator_util.tap_template(botconfig.ANDROID_TPL_CHAT_WOYAOQU)
+    tap_back_after_woyaoqu = vision_bot.try_tap(botconfig.ANDROID_TPL_SYSTEM_BACK, threshold=botconfig.ANDROID_THR_SYSTEM_BACK)
     vision_bot.navigate_to_coord(x=int(coord[0]), y=int(coord[1]))
     print(
         f"[route_to_datangguojing] tap_expand={tap_expand} tap_hide_ui_disable={tap_hide_ui} "
