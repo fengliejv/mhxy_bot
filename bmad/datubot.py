@@ -367,7 +367,7 @@ def fighting() -> None:
 
 def excute_datu_once() -> None:
     sys_util.clear_debug_capture()
-    # cleanup_desktop()
+    cleanup_desktop()
     goto_changan_jiudian()
     receive_baotu_task()
     llm_qiangdao_name, llm_map_name, llm_coord = capture_and_extract_baotu_llm()
